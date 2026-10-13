@@ -11,6 +11,7 @@
 *.har
 *.har.json
 !.github/examples/*.har.json
+!tests/fixtures/**/*.har.json
 *.sqlite
 *.db
 __pycache__/

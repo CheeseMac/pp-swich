@@ -1,0 +1,180 @@
+{
+  "log": {
+    "version": "1.2",
+    "creator": {
+      "name": "pp-swich demo",
+      "version": "1.0"
+    },
+    "entries": [
+      {
+        "startedDateTime": "2026-10-13T02:00:00.000Z",
+        "time": 120,
+        "request": {
+          "method": "GET",
+          "url": "https://crm.example.test/api/customers/C-1024",
+          "httpVersion": "HTTP/1.1",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "<REDACTED:authorization>"
+            }
+          ],
+          "queryString": [],
+          "cookies": [],
+          "headersSize": -1,
+          "bodySize": 0
+        },
+        "response": {
+          "status": 200,
+          "statusText": "OK",
+          "httpVersion": "HTTP/1.1",
+          "headers": [
+            {
+              "name": "Set-Cookie",
+              "value": "<REDACTED:set-cookie>"
+            }
+          ],
+          "cookies": [],
+          "content": {
+            "size": 90,
+            "mimeType": "application/json",
+            "text": "{\"id\": \"C-1024\", \"display_name\": \"Acme Industries\", \"tier\": \"gold\"}"
+          },
+          "redirectURL": "",
+          "headersSize": -1,
+          "bodySize": 90
+        },
+        "cache": {},
+        "timings": {
+          "send": 1,
+          "wait": 100,
+          "receive": 19
+        }
+      },
+      {
+        "startedDateTime": "2026-10-13T02:00:00.000Z",
+        "time": 120,
+        "request": {
+          "method": "GET",
+          "url": "https://crm.example.test/api/customers/C-2048",
+          "httpVersion": "HTTP/1.1",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "<REDACTED:authorization>"
+            }
+          ],
+          "queryString": [],
+          "cookies": [],
+          "headersSize": -1,
+          "bodySize": 0
+        },
+        "response": {
+          "status": 200,
+          "statusText": "OK",
+          "httpVersion": "HTTP/1.1",
+          "headers": [],
+          "cookies": [],
+          "content": {
+            "size": 90,
+            "mimeType": "application/json",
+            "text": "{\"id\": \"C-2048\", \"display_name\": \"Globex Corporation\", \"tier\": \"silver\"}"
+          },
+          "redirectURL": "",
+          "headersSize": -1,
+          "bodySize": 90
+        },
+        "cache": {},
+        "timings": {
+          "send": 1,
+          "wait": 100,
+          "receive": 19
+        }
+      },
+      {
+        "startedDateTime": "2026-10-13T02:00:00.000Z",
+        "time": 120,
+        "request": {
+          "method": "GET",
+          "url": "https://crm.example.test/api/customers/C-4096",
+          "httpVersion": "HTTP/1.1",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "<REDACTED:authorization>"
+            }
+          ],
+          "queryString": [],
+          "cookies": [],
+          "headersSize": -1,
+          "bodySize": 0
+        },
+        "response": {
+          "status": 200,
+          "statusText": "OK",
+          "httpVersion": "HTTP/1.1",
+          "headers": [],
+          "cookies": [],
+          "content": {
+            "size": 90,
+            "mimeType": "application/json",
+            "text": "{\"id\": \"C-4096\", \"display_name\": \"Initech\", \"tier\": \"bronze\"}"
+          },
+          "redirectURL": "",
+          "headersSize": -1,
+          "bodySize": 90
+        },
+        "cache": {},
+        "timings": {
+          "send": 1,
+          "wait": 100,
+          "receive": 19
+        }
+      },
+      {
+        "startedDateTime": "2026-10-13T02:00:00.000Z",
+        "time": 120,
+        "request": {
+          "method": "POST",
+          "url": "https://crm.example.test/api/customers/C-1024/refund",
+          "httpVersion": "HTTP/1.1",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "<REDACTED:authorization>"
+            }
+          ],
+          "queryString": [],
+          "cookies": [],
+          "headersSize": -1,
+          "bodySize": 0,
+          "postData": {
+            "mimeType": "application/json",
+            "text": "{\"amount\": 42.5}"
+          }
+        },
+        "response": {
+          "status": 200,
+          "statusText": "OK",
+          "httpVersion": "HTTP/1.1",
+          "headers": [],
+          "cookies": [],
+          "content": {
+            "size": 90,
+            "mimeType": "application/json",
+            "text": "{\"refund_id\": \"R-1\", \"status\": \"issued\"}"
+          },
+          "redirectURL": "",
+          "headersSize": -1,
+          "bodySize": 90
+        },
+        "cache": {},
+        "timings": {
+          "send": 1,
+          "wait": 100,
+          "receive": 19
+        }
+      }
+    ]
+  }
+}
