@@ -1,0 +1,52 @@
+name: Security gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  secret-scan:
+    name: repo secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: pp swich secret scanner
+        run: uv run python scripts/check-no-secrets.py --root .
+
+      - name: Canary check (no CANARY_ outside tests/fixtures/docs)
+        run: |
+          # canaries exist to prove real secrets never leak; they must stay
+          # inside tests, fixtures, docs and the redaction code paths
+          matches=$(grep -rIl "CANARY_" --exclude-dir=.git --exclude-dir=.venv \
+            --exclude-dir=node_modules --exclude-dir=tests \
+            --exclude-dir=docs --exclude-dir=fixtures . \
+            | grep -v "sanitizer.py\|response_guard.py\|mockcrm\|mock_adapter.py\|check-no-secrets\|security.yml\|bug_report.md\|ppswich_discovery/__init__.py" || true)
+          if [ -n "$matches" ]; then
+            echo "CANARY_ values found outside approved locations:"; echo "$matches"; exit 1
+          fi
+
+  p0-security-tests:
+    name: P0 security test matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Run P0 security suites
+        run: uv run pytest tests/security apps/executor/tests apps/control-api/tests -q

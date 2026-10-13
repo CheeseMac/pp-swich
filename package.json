@@ -1,0 +1,11 @@
+{
+  "name": "pp-swich-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "pp swich monorepo root (Node tooling for web-console)",
+  "scripts": {
+    "build": "pnpm --filter web-console build",
+    "typecheck": "pnpm --filter web-console typecheck",
+    "dev": "pnpm --filter web-console dev"
+  }
+}

@@ -1,0 +1,32 @@
+# Safety net only: .gitignore does NOT prevent AI coding tools reading these files.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*credentials*.json
+!tests/fixtures/**/synthetic-credentials.json
+*.har
+*.har.json
+!.github/examples/*.har.json
+*.sqlite
+*.db
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+node_modules/
+dist/
+build/
+*.log
+
+# local runtime state (dev database, uploaded files)
+data/
+.coverage
+coverage.xml
+htmlcov/
+.DS_Store
+*.tsbuildinfo

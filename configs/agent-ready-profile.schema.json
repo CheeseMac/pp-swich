@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent-ready profile configuration (commit-safe)",
+  "description": "References capabilities and profiles by alias only. An alias never confers authorization - the trusted broker authenticates callers independently (docs/16 section 3).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project", "workspace", "bindings", "runtime"],
+  "properties": {
+    "project": { "type": "string" },
+    "workspace": { "type": "string" },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["capability_namespace", "profile"],
+        "properties": {
+          "capability_namespace": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+          "profile": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9 _.:-]*$" }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["broker", "isolation"],
+      "properties": {
+        "broker": { "enum": ["local", "remote"] },
+        "isolation": { "enum": ["required", "dev-only"] }
+      }
+    }
+  }
+}

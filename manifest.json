@@ -1,0 +1,119 @@
+{
+  "project": "pp swich",
+  "revision": "v0.1.0 blueprint",
+  "docs": 20,
+  "files": {
+    ".env.example": {
+      "size": 357,
+      "sha256": "164e971241434274ecf1cb2d210457ecd65050a9fbff9790fdd985085658a934"
+    },
+    ".gitignore": {
+      "size": 353,
+      "sha256": "9847207ca2dc4f810750157f685fd29a20063471e551b88ff61a93ee8116f95f"
+    },
+    "AGENTS.md": {
+      "size": 1713,
+      "sha256": "936e8084a257446b9620be71b87372e2f5e9fc3a4ac0896024ebc8a6c5016972"
+    },
+    "CONTRIBUTING.md": {
+      "size": 1096,
+      "sha256": "d03ef43a1ce2eced8723d31234b9a930bfe03b9d00a9a481fb5526744d5a8314"
+    },
+    "README.md": {
+      "size": 7848,
+      "sha256": "5c8e801018c98b8273cb76f8349308e15a7e87c48bebaabb0008f9e617034a0e"
+    },
+    "SECURITY.md": {
+      "size": 1455,
+      "sha256": "c9959c1a86fa68e692f92e10c512edc99001ddf447fa6bf77e4a18dd7c0be875"
+    },
+    "assets/pp-swich-github-cover.png": {
+      "size": 1754296,
+      "sha256": "adb8520d97bba7f4427964f059168a5e5c8c1e55bbe5e0fd93392dfce9998554"
+    },
+    "docs/00-START-HERE.md": {
+      "size": 6010,
+      "sha256": "2f887449eff8a8717f738f769db3cbef7f0d31f0148f2ee82e02eb2939e61303"
+    },
+    "docs/01-PRODUCT-VISION-PRD.md": {
+      "size": 8448,
+      "sha256": "9b5a8959be9e8acd4372e4defde1dd2dc8ef89bb81f8a391e4b4d5ec3b716240"
+    },
+    "docs/02-ARCHITECTURE.md": {
+      "size": 7996,
+      "sha256": "89ba6bea5429b246ef34a24c654bb7d5d1792f73cde3a02e8a952acd3c6ecb33"
+    },
+    "docs/03-API-DISCOVERY.md": {
+      "size": 9121,
+      "sha256": "ec826ea373a7575236fbde45405a1a5396f75e147be8a40835caf647030615e7"
+    },
+    "docs/04-CAPABILITY-CONTRACT.md": {
+      "size": 6873,
+      "sha256": "833da6fab3063230bfb98733e40384e4a74fe0dc5b29f32f820d29eca3c03c80"
+    },
+    "docs/05-SECURITY.md": {
+      "size": 9968,
+      "sha256": "e4ac3f6960ef8db24a6206ae2c060525fb5128211250f48c5da4c3648e0ce1c9"
+    },
+    "docs/06-DATABASE.md": {
+      "size": 12445,
+      "sha256": "83806eef4bf7739395f74de50fa096b9dc3982da83d31779ffe5750e66038615"
+    },
+    "docs/07-API-SPEC.md": {
+      "size": 8356,
+      "sha256": "109414b8b66b2957415c5b805f2d2ade923c2c541c99b8008c5df08b24fc2fd1"
+    },
+    "docs/08-REPOSITORY-STRUCTURE.md": {
+      "size": 10529,
+      "sha256": "e8a5d669bf07e16f89f9ac409353f93acebccce3a02236be7ad4fb54101940b6"
+    },
+    "docs/09-IMPLEMENTATION-PLAN.md": {
+      "size": 9703,
+      "sha256": "764415fc1d0a6e22f0a7445547a479f6deb128b75c57e3948fedeb9abc274c34"
+    },
+    "docs/10-DEPLOYMENT.md": {
+      "size": 5516,
+      "sha256": "3bd19f8aae06d57e016ececbd21d47bec0e1738098c6f36fa88f1b954921d0b5"
+    },
+    "docs/11-TEST-PLAN.md": {
+      "size": 4709,
+      "sha256": "b13e7e2e11ece053110c49ed662070cba087f91ad2e0fa5a9ab2a41b33ef7377"
+    },
+    "docs/12-UX-FLOWS.md": {
+      "size": 6475,
+      "sha256": "ef3fa7600e477cb8b859f8df5dd3a4d617a5e69b10fcfb4a817301a74e98bc79"
+    },
+    "docs/13-DECISIONS.md": {
+      "size": 4291,
+      "sha256": "7d04f1d1e50d3b4eee23dea936d81f0c2855ec3b181a64f50cd212c1a23b4d5b"
+    },
+    "docs/14-OPEN-SOURCE.md": {
+      "size": 3824,
+      "sha256": "5aa000fe5c4182911f71b5177e5655e78a3c1e590b78044d757efda7c131bffc"
+    },
+    "docs/15-REFERENCES.md": {
+      "size": 5035,
+      "sha256": "165a924c7dc085cb6d415bf50a96dbb9f455a60b7e6724221260a21ae4396242"
+    },
+    "docs/16-AGENT-DEVELOPMENT-RULES.md": {
+      "size": 3748,
+      "sha256": "a225ffc7976e72376ae7b69ffebfa4d2206e38bb6416a63fe4b0f0b9aca634aa"
+    },
+    "docs/17-OPERATIONS-RUNBOOK.md": {
+      "size": 4366,
+      "sha256": "8c261ccbdda8f2438ce31fdf043125e0dd7078fc23329e2a4d0e476e96fa1ff9"
+    },
+    "docs/18-SECRETLESS-DEVELOPMENT.md": {
+      "size": 12236,
+      "sha256": "d8d15a02fa28e2d9bd6e6c956b2abbedb86389174c2b8afb4553f9bdad6979ae"
+    },
+    "docs/19-FIRST-CODING-TASKS.md": {
+      "size": 4858,
+      "sha256": "5bb2765137ab48e76765e10868f05376c059894e5855f5d2d694029015da710b"
+    },
+    "pp-swich.example.yaml": {
+      "size": 281,
+      "sha256": "07564f8ac241c9a1699c40f6b78f71bbaecfffd4e64aa3faf9fb586abaa6767a"
+    }
+  }
+}

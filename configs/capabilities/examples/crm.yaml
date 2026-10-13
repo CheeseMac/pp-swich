@@ -1,0 +1,45 @@
+# Example internal capability contract (docs/04-CAPABILITY-CONTRACT.md).
+# Commit-safe: no endpoints, no credentials, no secret refs.
+apiVersion: pp-swich.dev/v1
+kind: Capability
+metadata:
+  name: crm.get_customer
+  version: 1.0.0
+  displayName: Get customer
+  ownerWorkspace: demo
+spec:
+  description: Get a customer within the caller's authorized scope
+  visibility: private
+  riskLevel: low
+  operationRef:
+    service: crm
+    operation: GET /api/customers/{id}
+    contractVersion: 1
+  inputSchema:
+    type: object
+    additionalProperties: false
+    required: [customer_id]
+    properties:
+      customer_id:
+        type: string
+        minLength: 1
+        maxLength: 64
+  outputSchema:
+    type: object
+    additionalProperties: false
+    required: [id, display_name]
+    properties:
+      id: { type: string }
+      display_name: { type: string }
+  execution:
+    path: { id: customer_id }
+    query: {}
+    body: {}
+  authorization:
+    userScopes: [crm.customer.read]
+    agentScopes: [crm.customer.read]
+    approvalPolicy: none
+  response:
+    allowFields: [id, display_name]
+    includeRawHeaders: false
+    redactSecrets: true

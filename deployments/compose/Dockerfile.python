@@ -1,0 +1,18 @@
+# Python services image: control-api / executor / mock CRM share one build.
+# Build context must be the repository root (see docker-compose.yml).
+FROM python:3.12-slim
+
+# uv for fast, lockfile-respecting workspace installs
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# layer-cache friendly: copy manifests first
+COPY pyproject.toml uv.lock ./
+COPY packages ./packages
+COPY apps ./apps
+
+RUN uv sync --frozen --no-dev --all-packages
+
+# services bind 127.0.0.1 inside the container network; compose maps ports
+CMD ["uv", "run", "ppswich-control-api"]

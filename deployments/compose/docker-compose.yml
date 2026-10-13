@@ -1,0 +1,56 @@
+# pp swich compose deployment (docs/10-DEPLOYMENT.md)
+#
+# Profile: small-team server deployment. The control plane and executor run
+# as separate containers (secrets stay with the executor), PostgreSQL is the
+# production database baseline. Set PP_SWICH_INTERNAL_TOKEN to a strong
+# value provided by your deployment platform - never commit it.
+
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ppswich
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ppswich
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ppswich"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  executor:
+    build:
+      context: ../..
+      dockerfile: deployments/compose/Dockerfile.python
+    command: ppswich-executor
+    environment:
+      PP_SWICH_INTERNAL_TOKEN: ${PP_SWICH_INTERNAL_TOKEN:?set PP_SWICH_INTERNAL_TOKEN}
+      PP_SWICH_DEMO_MODE: "false"
+    ports:
+      - "127.0.0.1:8912:8912"
+
+  control-api:
+    build:
+      context: ../..
+      dockerfile: deployments/compose/Dockerfile.python
+    command: ppswich-control-api
+    environment:
+      PP_SWICH_DB_URL: postgresql+psycopg://ppswich:${POSTGRES_PASSWORD}@db:5432/ppswich
+      PP_SWICH_EXECUTOR_URL: http://executor:8912
+      PP_SWICH_INTERNAL_TOKEN: ${PP_SWICH_INTERNAL_TOKEN}
+      PP_SWICH_DEMO_MODE: "false"
+      PP_SWICH_AUTO_MIGRATE: "true"
+    ports:
+      - "127.0.0.1:8911:8911"
+    depends_on:
+      db:
+        condition: service_healthy
+      executor:
+        condition: service_started
+
+volumes:
+  pgdata:

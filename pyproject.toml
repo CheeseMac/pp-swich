@@ -1,0 +1,87 @@
+[project]
+name = "pp-swich-workspace"
+version = "0.1.0"
+description = "pp swich monorepo workspace root (tooling only)"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=5.0",
+    "ruff>=0.7",
+    "mypy>=1.13",
+]
+
+[tool.uv.workspace]
+members = [
+    "packages/core",
+    "packages/db",
+    "packages/discovery-sdk",
+    "packages/policy-engine",
+    "packages/secret-provider",
+    "packages/python-sdk",
+    "apps/control-api",
+    "apps/executor",
+    "apps/mcp-adapter",
+    "apps/demo-mock-crm",
+]
+
+[tool.uv.sources]
+ppswich-core = { workspace = true }
+ppswich-db = { workspace = true }
+ppswich-discovery = { workspace = true }
+ppswich-policy = { workspace = true }
+ppswich-secrets = { workspace = true }
+ppswich = { workspace = true }
+ppswich-control = { workspace = true }
+ppswich-executor = { workspace = true }
+ppswich-mcp = { workspace = true }
+ppswich-mockcrm = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv", "node_modules", "*/migrations/versions/*"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B", "S", "RUF"]
+ignore = [
+    "S101",   # asserts are fine in tests and guard clauses
+    "B008",   # FastAPI Depends() in defaults is idiomatic
+    "RUF012", # mutable class attrs typed with ClassVar in ORM models
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S107", "S108"]
+"apps/demo-mock-crm/**" = ["S106"]
+"scripts/**" = ["S603", "S607"]  # dev tooling invokes interpreters/package managers
+
+[tool.pytest.ini_options]
+testpaths = [
+    "packages/core/tests",
+    "packages/db/tests",
+    "packages/discovery-sdk/tests",
+    "packages/policy-engine/tests",
+    "packages/secret-provider/tests",
+    "packages/python-sdk/tests",
+    "apps/control-api/tests",
+    "apps/executor/tests",
+    "apps/mcp-adapter/tests",
+    "apps/demo-mock-crm/tests",
+    "tests",
+]
+addopts = "-q --import-mode=importlib"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = false
+no_implicit_optional = true
+exclude = ["tests", "migrations", "node_modules"]
+
+[tool.coverage.run]
+source = ["packages", "apps"]
+omit = ["*/migrations/*", "*/tests/*"]

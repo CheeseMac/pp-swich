@@ -1,0 +1,23 @@
+[project]
+name = "ppswich-executor"
+version = "0.1.0"
+description = "pp swich trusted executor: the only process that touches credentials"
+requires-python = ">=3.12"
+dependencies = [
+    "ppswich-core",
+    "ppswich-secrets",
+    "ppswich-policy",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ppswich_executor"]
+
+[project.scripts]
+ppswich-executor = "ppswich_executor.main:main"
