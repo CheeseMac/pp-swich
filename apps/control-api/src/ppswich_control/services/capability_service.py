@@ -73,6 +73,7 @@ def create_capability(
         name=name,
         display_name=display_name,
         description=description,
+        created_by=principal_id,
         status=CapabilityStatus.DRAFT.value,
     )
     session.add(capability)
@@ -130,6 +131,13 @@ def _transition(
     note: str,
 ) -> CapabilityRow:
     capability = _get_capability(session, workspace_id, capability_id)
+    # review PR-SEC-01: the creator cannot review/verify/publish their
+    # own capability - a different human must sign each step
+    if capability.created_by is not None and capability.created_by == principal_id:
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Capability review steps require a principal other than the creator",
+        )
     capability.status = transition_capability(
         CapabilityStatus(capability.status), target
     ).value
@@ -181,6 +189,14 @@ def publish_capability(
     (acceptance scenario 3: publishing an unreviewed candidate -> 409).
     """
     capability = _get_capability(session, workspace_id, capability_id)
+    if (
+        capability.created_by is not None
+        and capability.created_by == principal_id
+    ):
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Publishing requires a principal other than the capability creator",
+        )
     current = CapabilityStatus(capability.status)
     if current != CapabilityStatus.VERIFIED:
         raise ApiError(

@@ -85,7 +85,7 @@ def harness(tmp_path: Path) -> Harness:
         session.commit()
 
     provider = MockSecretProvider()
-    executor_app = create_executor_app(ExecutorSettings(), provider=provider)
+    executor_app = create_executor_app(ExecutorSettings(demo_mode=True), provider=provider)
     executor = TestClient(executor_app)
 
     settings = ControlSettings(
@@ -177,18 +177,20 @@ def bootstrap_demo(harness: Harness) -> dict:
     assert response.status_code == 201, response.text
     ids["capability_id"] = response.json()["data"]["id"]
 
+    # review PR-SEC-01: review/verify/publish must be performed by a human
+    # principal OTHER than the creator - carol is the demo reviewer
     for action in ("review", "verify"):
         response = control.post(
             f"/api/v1/capabilities/{ids['capability_id']}/{action}",
             json={"evidence": f"demo {action}"},
-            headers=auth(ALICE_TOKEN),
+            headers=auth(CAROL_TOKEN),
         )
         assert response.status_code == 200, response.text
 
     response = control.post(
         f"/api/v1/capabilities/{ids['capability_id']}/publish",
         json={"version": "1.0.0"},
-        headers=auth(ALICE_TOKEN),
+        headers=auth(CAROL_TOKEN),
     )
     assert response.status_code == 200, response.text
     ids["published"] = response.json()["data"]

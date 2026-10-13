@@ -130,6 +130,7 @@ class EndpointRow(Base):
     environment: Mapped[str] = mapped_column(String(32), nullable=False)
     base_url: Mapped[str] = mapped_column(String(512), nullable=False)
     approved_hosts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -226,6 +227,9 @@ class CapabilityRow(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # creator accountability: review/verify/publish must be performed by a
+    # DIFFERENT human principal than the creator (review PR-SEC-01)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     visibility: Mapped[str] = mapped_column(String(16), default="private")
     status: Mapped[str] = mapped_column(String(16), default="draft")
     created_at: Mapped[datetime] = mapped_column(
@@ -411,8 +415,13 @@ class ApprovalRow(Base):
         ForeignKey("workspaces.id"), nullable=False, index=True
     )
     invocation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    requester_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    capability_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     approver_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     arguments_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    # approvals expire; a stale approval can never authorize a replay
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(
         String(16), CheckConstraint("status IN ('pending','approved','rejected','consumed')", "status"),  # noqa: E501
         default="pending",

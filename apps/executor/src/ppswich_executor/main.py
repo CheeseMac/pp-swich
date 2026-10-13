@@ -41,8 +41,10 @@ class ExecutorSettings(BaseModel):
             "PP_SWICH_INTERNAL_TOKEN", DEFAULT_INTERNAL_TOKEN
         )
     )
+    # review PR-SEC-05: demo mode is opt-in only; production must never run
+    # with mock providers, mock transports or the synthetic internal token
     demo_mode: bool = Field(
-        default_factory=lambda: os.environ.get("PP_SWICH_DEMO_MODE", "true").lower()
+        default_factory=lambda: os.environ.get("PP_SWICH_DEMO_MODE", "false").lower()
         in ("1", "true", "yes")
     )
 
@@ -63,12 +65,23 @@ class ExecutorState:
         self.settings = settings or ExecutorSettings()
         self.provider: SecretProvider = MockSecretProvider()
         self.nonces = NonceStore()
-        self.http_adapter = HttpAdapter()
+        self.http_adapter = HttpAdapter(network_checker=check_outbound_target)
         self.mock_adapter = MockAdapter()
 
 
 def error_body(code: str, message: str, details: dict | None = None) -> dict:
     return {"error": {"code": code, "message": message, "details": details or {}}}
+
+
+def _validate_production_settings(settings: ExecutorSettings) -> None:
+    if settings.demo_mode:
+        return
+    if settings.internal_token == DEFAULT_INTERNAL_TOKEN or not settings.internal_token:
+        raise RuntimeError(
+            "Refusing to start outside demo mode with the default synthetic "
+            "internal token: set PP_SWICH_INTERNAL_TOKEN via your deployment "
+            "platform (review PR-SEC-05)."
+        )
 
 
 def create_app(
@@ -77,6 +90,8 @@ def create_app(
     provider: SecretProvider | None = None,
     network_checker=check_outbound_target,
 ) -> FastAPI:
+    settings = settings or ExecutorSettings()
+    _validate_production_settings(settings)
     state = ExecutorState(settings)
     if provider is not None:
         state.provider = provider
@@ -111,7 +126,18 @@ def create_app(
         # not trust internal traffic blindly (docs/02 section 8)
         validate_arguments(plan.arguments, plan.input_schema)
 
+        if not state.settings.demo_mode and plan.secret_ref.startswith("mock://"):
+            # PR-SEC-05: mock credentials must never execute outside demo
+            raise ApiError(
+                ErrorCode.SECRET_PROVIDER_UNAVAILABLE,
+                "Mock credential refs are rejected outside demo mode",
+            )
         if plan.endpoint_base_url.startswith("mock://"):
+            if not state.settings.demo_mode:
+                raise ApiError(
+                    ErrorCode.UPSTREAM_FAILURE,
+                    "Mock transports are rejected outside demo mode",
+                )
             adapter = state.mock_adapter
         else:
             check = network_checker(
@@ -128,7 +154,9 @@ def create_app(
             raise ApiError(ErrorCode.SECRET_PROVIDER_UNAVAILABLE, str(exc)) from exc
 
         raw = adapter.execute(plan, credential)
-        guarded = project_response(raw, plan.allow_fields)
+        guarded = project_response(
+            raw, plan.allow_fields, output_schema=plan.output_schema
+        )
         return {
             "invocation_id": str(plan.invocation_id),
             "result": guarded.result,
@@ -169,11 +197,13 @@ def _join_url(base_url: str, path_template: str) -> str:
     return f"{base_url.rstrip('/')}{path_template}"
 
 
-app = create_app()
+# NOTE: no module-level app instance - production startup must go through
+# main()/create_app() so the PR-SEC-05 settings validation always runs.
 
 
 def main() -> None:  # pragma: no cover - console entry point
     import uvicorn
 
+    app = create_app(ExecutorSettings())
     port = int(os.environ.get("PP_SWICH_EXECUTOR_PORT", "8912"))
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

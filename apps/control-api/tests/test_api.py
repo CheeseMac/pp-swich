@@ -90,9 +90,16 @@ class TestScenario3PublishGate:
         assert response.status_code == 201
         draft_id = response.json()["data"]["id"]
 
+        # PR-SEC-01: the creator cannot publish their own capability at all
         response = demo.harness.control.post(
             f"/api/v1/capabilities/{draft_id}/publish", json={"version": "1.0.0"},
             headers=auth(ALICE_TOKEN),
+        )
+        assert response.status_code == 403
+        # a different reviewer on an unverified capability still gets 409
+        response = demo.harness.control.post(
+            f"/api/v1/capabilities/{draft_id}/publish", json={"version": "1.0.0"},
+            headers=auth(CAROL_TOKEN),
         )
         assert response.status_code == 409
         assert response.json()["error"]["code"] == "CAPABILITY_NOT_REVIEWED"
@@ -353,11 +360,11 @@ class TestHighRiskApproval:
         for action in ("review", "verify"):
             demo.harness.control.post(
                 f"/api/v1/capabilities/{capability_id}/{action}",
-                json={"evidence": "demo"}, headers=auth(ALICE_TOKEN),
+                json={"evidence": "demo"}, headers=auth(CAROL_TOKEN),
             )
         demo.harness.control.post(
             f"/api/v1/capabilities/{capability_id}/publish",
-            json={"version": "1.0.0"}, headers=auth(ALICE_TOKEN),
+            json={"version": "1.0.0"}, headers=auth(CAROL_TOKEN),
         )
 
         response = demo.harness.control.post(

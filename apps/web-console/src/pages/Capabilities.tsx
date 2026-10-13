@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Capability, Operation, Service } from "../types";
+import type { Capability, Operation } from "../types";
 import { Button, Card, Empty, ErrorNote, Field, StatusBadge } from "../ui";
 
 export function CapabilitiesPage() {
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
-  const [services, setServices] = useState<Service[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
   const [error, setError] = useState<unknown>(null);
 
@@ -17,7 +16,6 @@ export function CapabilitiesPage() {
 
   const load = () => {
     api.get<Capability[]>("/api/v1/capabilities").then(setCapabilities).catch(setError);
-    api.get<Service[]>("/api/v1/services").then(setServices).catch(setError);
     api.get<Operation[]>("/api/v1/operations").then(setOperations).catch(setError);
   };
   useEffect(load, []);
@@ -158,7 +156,7 @@ export function CapabilitiesPage() {
         )}
       </Card>
       <p className="muted">
-        {services.length > 0 && "Workflow: create → review → verify → publish. Publishing an unreviewed capability is rejected with 409."}
+        {"Workflow: create → review → verify → publish. Review steps must be performed by a different human than the creator (agents are denied); publishing an unreviewed capability is rejected with 409."}
       </p>
     </div>
   );

@@ -20,7 +20,9 @@ class ControlSettings(BaseModel):
     internal_token: str = os.environ.get(
         "PP_SWICH_INTERNAL_TOKEN", "dev-internal-token-synthetic"
     )
-    demo_mode: bool = os.environ.get("PP_SWICH_DEMO_MODE", "true").lower() in (
+    # review PR-SEC-05: demo mode (mock endpoints, dev login directory,
+    # deterministic mock credentials) is explicitly opt-in only
+    demo_mode: bool = os.environ.get("PP_SWICH_DEMO_MODE", "false").lower() in (
         "1",
         "true",
         "yes",

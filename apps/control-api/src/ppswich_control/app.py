@@ -12,6 +12,19 @@ from ppswich_control.api.v1.router import router as v1_router
 from ppswich_control.envelope import RequestIdMiddleware, install_error_handlers
 from ppswich_control.settings import ControlSettings
 
+DEFAULT_INTERNAL_TOKEN = "dev-internal-token-synthetic"  # noqa: S105 - dev constant
+
+
+def _validate_production_settings(settings: ControlSettings) -> None:
+    if settings.demo_mode:
+        return
+    if settings.internal_token == DEFAULT_INTERNAL_TOKEN or not settings.internal_token:
+        raise RuntimeError(
+            "Refusing to start outside demo mode with the default synthetic "
+            "internal token: set PP_SWICH_INTERNAL_TOKEN via your deployment "
+            "platform (review PR-SEC-05)."
+        )
+
 
 def create_app(
     settings: ControlSettings | None = None,
@@ -20,6 +33,7 @@ def create_app(
     run_migrations: bool | None = None,
 ) -> FastAPI:
     settings = settings or ControlSettings.from_env()
+    _validate_production_settings(settings)
 
     if settings.db_url.startswith("sqlite:///"):
         db_path = settings.db_url.removeprefix("sqlite:///")

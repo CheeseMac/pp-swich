@@ -71,3 +71,20 @@ def require_principal(
         raise ApiError(ErrorCode.UNAUTHENTICATED, "Unknown or revoked credential")
     request.state.principal_id = str(principal.id)
     return AuthContext(principal=principal, workspace_id=principal.workspace_id)
+
+
+def require_user(
+    auth: AuthContext = Depends(require_principal),
+) -> AuthContext:
+    """Management APIs are human-only: agent principals are denied.
+
+    Review decision PR-SEC-01: an agent must never be able to grant
+    itself capabilities, review/publish tools, approve endpoints or
+    approve high-risk invocations.
+    """
+    if auth.principal.kind != "user":
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Management operations require a human principal",
+        )
+    return auth

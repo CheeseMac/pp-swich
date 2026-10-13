@@ -59,6 +59,11 @@ export function AuditPage() {
           <li>High-risk capabilities require a second-principal approval (APPROVAL_REQUIRED).</li>
           <li>Secret provider outages fail closed (503), never fall back to plaintext.</li>
           <li>Cross-workspace objects do not exist for other tenants (404, no info leak).</li>
+          <li>Profiles can only bind connections owned by the creating principal (no cross-user assembly).</li>
+          <li>Management APIs are human-only; the capability creator cannot review/publish their own draft.</li>
+          <li>Idempotency keys replay only for the same principal and arguments (409 otherwise).</li>
+          <li>High-risk approvals bind requester + version + profile + arguments and expire in 15 minutes.</li>
+          <li>Executor enforces an approved-host whitelist; metadata ranges can never be approved.</li>
         </ul>
       </Card>
     </div>

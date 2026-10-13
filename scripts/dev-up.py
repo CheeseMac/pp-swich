@@ -51,6 +51,9 @@ def main(argv: list[str] | None = None) -> None:
 
     if not args.no_migrate:
         os.environ.setdefault("PP_SWICH_AUTO_MIGRATE", "true")
+    # the local demo stack runs with mock credentials and the dev login
+    # directory; production deployments must never set this flag
+    os.environ.setdefault("PP_SWICH_DEMO_MODE", "true")
 
     from ppswich_control.app import create_app
     from ppswich_control.settings import ControlSettings

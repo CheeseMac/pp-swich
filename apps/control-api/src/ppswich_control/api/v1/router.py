@@ -36,7 +36,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ppswich_control.auth import AuthContext, get_session, require_principal
+from ppswich_control.auth import (
+    AuthContext,
+    get_session,
+    require_principal,
+    require_user,
+)
 from ppswich_control.envelope import ok
 from ppswich_control.services.capability_service import (
     create_capability,
@@ -226,6 +231,13 @@ def create_endpoint(
         raise ApiError(ErrorCode.SERVICE_NOT_FOUND, "Service not found in this workspace")
     if payload.status not in ("pending", "approved"):
         raise ApiError(ErrorCode.BAD_REQUEST, "status must be pending or approved")
+    # review PR-SEC-01: outside demo mode a creator cannot self-approve
+    # an endpoint; use POST /endpoints/{id}/approve as another principal
+    if payload.status == "approved" and not request.app.state.settings.demo_mode:
+        raise ApiError(
+            ErrorCode.ENDPOINT_NOT_APPROVABLE,
+            "Endpoint approval requires the approve action by another principal",
+        )
     allowed_schemes: tuple[str, ...] = ("http://", "https://")
     if request.app.state.settings.demo_mode:
         allowed_schemes = (*allowed_schemes, "mock://")  # in-process demo transport
@@ -238,6 +250,7 @@ def create_endpoint(
         environment=payload.environment,
         base_url=payload.base_url.rstrip("/"),
         approved_hosts=[h.lower() for h in payload.approved_hosts],
+        created_by=auth.principal_id,
         status=payload.status,
     )
     session.add(endpoint)
@@ -257,6 +270,40 @@ def create_endpoint(
         },
         201,
     )
+
+
+@router.post("/endpoints/{endpoint_id}/approve")
+def approve_endpoint(
+    endpoint_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_user),
+    session: Session = Depends(get_session),
+):
+    """Approve a pending endpoint (PR-SEC-01).
+
+    Human principals only. Outside demo mode the approver must differ from
+    the endpoint creator - self-approval of arbitrary targets is rejected.
+    """
+    endpoint = session.get(EndpointRow, endpoint_id)
+    if endpoint is None or endpoint.workspace_id != auth.workspace_id:
+        raise ApiError(ErrorCode.ENDPOINT_NOT_FOUND, "Endpoint not found")
+    if endpoint.status != "pending":
+        raise ApiError(ErrorCode.CONFLICT, f"Endpoint already {endpoint.status}")
+    demo = request.app.state.settings.demo_mode
+    if not demo and endpoint.created_by is not None and endpoint.created_by == auth.principal_id:
+        raise ApiError(
+            ErrorCode.ENDPOINT_NOT_APPROVABLE,
+            "Endpoint approval requires a principal other than the creator",
+        )
+    endpoint.status = "approved"
+    session.add(
+        AuditEventRow(
+            workspace_id=auth.workspace_id, actor_id=auth.principal_id,
+            action="endpoint.approve", decision="allowed",
+            redacted_metadata={"endpoint_id": str(endpoint_id)},
+        )
+    )
+    return ok(request, {"id": str(endpoint.id), "status": endpoint.status})
 
 
 @router.get("/endpoints")
@@ -480,6 +527,19 @@ def list_capabilities(
     if status:
         stmt = stmt.where(CapabilityRow.status == status)
     rows = session.scalars(stmt.order_by(CapabilityRow.name)).all()
+    if auth.principal.kind == "agent":
+        # review Q5: an agent's tool directory (HTTP and MCP alike) must
+        # contain only capabilities explicitly granted to it
+        granted_ids = {
+            grant.capability_id
+            for grant in session.scalars(
+                select(AgentGrantRow).where(
+                    AgentGrantRow.workspace_id == auth.workspace_id,
+                    AgentGrantRow.agent_principal_id == auth.principal_id,
+                )
+            ).all()
+        }
+        rows = [row for row in rows if row.id in granted_ids]
     result = []
     for row in rows:
         versions = session.scalars(
@@ -514,7 +574,7 @@ def review_capability_route(
     capability_id: UUID,
     payload: ReviewRequest,
     request: Request,
-    auth: AuthContext = Depends(require_principal),
+    auth: AuthContext = Depends(require_user),
     session: Session = Depends(get_session),
 ):
     row = review_capability(
@@ -530,7 +590,7 @@ def verify_capability_route(
     capability_id: UUID,
     payload: ReviewRequest,
     request: Request,
-    auth: AuthContext = Depends(require_principal),
+    auth: AuthContext = Depends(require_user),
     session: Session = Depends(get_session),
 ):
     row = verify_capability(
@@ -546,7 +606,7 @@ def publish_capability_route(
     capability_id: UUID,
     payload: PublishRequest,
     request: Request,
-    auth: AuthContext = Depends(require_principal),
+    auth: AuthContext = Depends(require_user),
     session: Session = Depends(get_session),
 ):
     published = publish_capability(
@@ -790,7 +850,11 @@ def list_invocations(
 ):
     rows = session.scalars(
         select(InvocationRow)
-        .where(InvocationRow.workspace_id == auth.workspace_id)
+        .where(
+            InvocationRow.workspace_id == auth.workspace_id,
+            # SEC-029: execution results are visible to their owner only
+            InvocationRow.principal_id == auth.principal_id,
+        )
         .order_by(InvocationRow.created_at.desc())
         .limit(min(limit, 200))
     ).all()
@@ -805,7 +869,11 @@ def get_invocation(
     session: Session = Depends(get_session),
 ):
     row = session.get(InvocationRow, invocation_id)
-    if row is None or row.workspace_id != auth.workspace_id:
+    if (
+        row is None
+        or row.workspace_id != auth.workspace_id
+        or row.principal_id != auth.principal_id
+    ):
         raise ApiError(ErrorCode.NOT_FOUND, "Invocation not found")
     return ok(request, _invocation_view(row, include_result=True))
 
@@ -828,7 +896,7 @@ def _invocation_view(row: InvocationRow, *, include_result: bool = False) -> dic
 def approve_approval(
     approval_id: UUID,
     request: Request,
-    auth: AuthContext = Depends(require_principal),
+    auth: AuthContext = Depends(require_user),
     session: Session = Depends(get_session),
 ):
     approval = session.get(ApprovalRow, approval_id)
@@ -894,7 +962,7 @@ def list_audit_events(
 def create_agent_grant(
     payload: AgentGrantCreate,
     request: Request,
-    auth: AuthContext = Depends(require_principal),
+    auth: AuthContext = Depends(require_user),
     session: Session = Depends(get_session),
 ):
     agent = session.get(PrincipalRow, payload.agent_principal_id)

@@ -87,6 +87,13 @@ def create_profile(
     if any(x is None for x in (service, endpoint, connection)):
         raise ApiError(ErrorCode.PROFILE_NOT_FOUND, "Referenced objects not found")
     assert service and endpoint and connection
+    # review PR-SEC-01 (SEC-021): a profile may only bind a Connection
+    # owned by the creating principal - no cross-user assembly
+    if connection.owner_principal_id != principal_id:
+        raise ApiError(
+            ErrorCode.PROFILE_NOT_ALLOWED,
+            "Connection belongs to another principal",
+        )
 
     domain_profile = Profile(
         workspace_id=workspace_id, service_id=service_id, endpoint_id=endpoint_id,
@@ -213,6 +220,10 @@ def activate_binding(
     endpoint = session.get(EndpointRow, profile.endpoint_id)
     if connection is None or connection.status != "active":
         raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Connection is not active")
+    # execution-time re-check (PR-SEC-01): the bound profile's
+    # connection must still belong to the profile owner
+    if connection.owner_principal_id != profile.owner_principal_id:
+        raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Connection ownership mismatch")
     if endpoint is None or endpoint.status != "approved":
         raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Endpoint is not approved")
     if endpoint.service_id != profile.service_id or connection.service_id != profile.service_id:

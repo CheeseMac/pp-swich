@@ -68,7 +68,7 @@ def stack(tmp_path_factory, start_server_fixture):
 
     start_server = start_server_fixture
     crm = start_server(mockcrm_app, name="mock-crm")
-    executor_app = create_executor_app(ExecutorSettings())
+    executor_app = create_executor_app(ExecutorSettings(demo_mode=True))
     executor = start_server(executor_app, name="executor")
 
     control_app = create_app(
@@ -152,12 +152,12 @@ def demo(stack) -> dict:
         for action in ("review", "verify"):
             stepped = client.post(
                 f"/api/v1/capabilities/{ids['capability_id']}/{action}",
-                json={"evidence": f"e2e {action}"}, headers=auth(ALICE_TOKEN),
+                json={"evidence": f"e2e {action}"}, headers=auth(CAROL_TOKEN),
             )
             assert stepped.status_code == 200, stepped.text
         published = client.post(
             f"/api/v1/capabilities/{ids['capability_id']}/publish",
-            json={"version": "1.0.0"}, headers=auth(ALICE_TOKEN),
+            json={"version": "1.0.0"}, headers=auth(CAROL_TOKEN),
         )
         assert published.status_code == 200, published.text
 

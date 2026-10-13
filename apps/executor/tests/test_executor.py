@@ -51,7 +51,7 @@ def _base_plan() -> dict:
 
 
 def _client(provider=None, settings=None) -> TestClient:
-    app = create_app(settings or ExecutorSettings(), provider=provider)
+    app = create_app(settings or ExecutorSettings(demo_mode=True), provider=provider)
     return TestClient(app)
 
 
@@ -198,12 +198,12 @@ class TestSeedEndpoint:
         assert response.json()["status"] == "seeded"
 
     def test_seed_refused_outside_demo_mode(self) -> None:
-        settings = ExecutorSettings(demo_mode=False)
+        settings = ExecutorSettings(demo_mode=False, internal_token="ci-strong-token-9f21ab")
         with _client(settings=settings) as client:
             response = client.post(
                 "/internal/v1/admin/seeds",
                 json={"secret_ref": "mock://x", "material": {"api_key": "k"}},
-                headers={"X-Internal-Token": DEFAULT_INTERNAL_TOKEN},
+                headers={"X-Internal-Token": settings.internal_token},
             )
         assert response.status_code == 404
 

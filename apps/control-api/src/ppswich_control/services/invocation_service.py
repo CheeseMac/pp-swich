@@ -52,6 +52,20 @@ from sqlalchemy.orm import Session
 PLAN_DEADLINE_S = 30.0
 
 
+def _epoch(value) -> float:
+    """Epoch seconds, treating naive datetimes as UTC.
+
+    SQLite returns DateTime values without tzinfo; ``.timestamp()`` would
+    reinterpret them in the host's local zone and misjudge expiries.
+    """
+    import calendar
+
+    if value.tzinfo is None:
+        return float(calendar.timegm(value.timetuple()))
+    return value.timestamp()
+APPROVAL_TTL_S = 15 * 60  # approvals expire after 15 minutes
+
+
 def _arguments_digest(arguments: dict) -> str:
     return hashlib.sha256(
         json.dumps(arguments, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -106,24 +120,7 @@ def invoke_capability(
     settings,
     executor_client: httpx.Client,
 ) -> dict:
-    # --- idempotency: same key returns the recorded outcome, no re-execution
-    if idempotency_key:
-        existing = session.scalars(
-            select(InvocationRow).where(
-                InvocationRow.workspace_id == workspace_id,
-                InvocationRow.idempotency_key == idempotency_key,
-            )
-        ).one_or_none()
-        if existing is not None:
-            return {
-                "invocation_id": str(existing.id),
-                "status": existing.status,
-                "result": existing.result,
-                "profile_label": existing.profile_snapshot.get("profile_label"),
-                "idempotent_replay": True,
-            }
-
-    # --- capability resolution (workspace-scoped, no cross-tenant leakage)
+    # --- capability resolution first (workspace-scoped, no cross-tenant leak)
     capability = session.scalars(
         select(CapabilityRow).where(
             CapabilityRow.workspace_id == workspace_id,
@@ -134,6 +131,36 @@ def invoke_capability(
         # 404 for missing AND for unpublished: existence is not revealed
         raise ApiError(ErrorCode.CAPABILITY_NOT_FOUND, "Capability not found")
     version_row = _load_published_version(session, capability, capability_version)
+
+    # --- idempotency: a key replays ONLY for the same principal invoking the
+    # same capability version with the same arguments (review PR-SEC-02 /
+    # SEC-025). A key reused by anyone else is a conflict, never their data.
+    if idempotency_key:
+        existing = session.scalars(
+            select(InvocationRow).where(
+                InvocationRow.workspace_id == workspace_id,
+                InvocationRow.idempotency_key == idempotency_key,
+            )
+        ).one_or_none()
+        if existing is not None:
+            replay_ok = (
+                existing.principal_id == principal_id
+                and existing.capability_name == capability.name
+                and existing.capability_version == version_row.version
+                and existing.arguments_digest == _arguments_digest(arguments)
+            )
+            if not replay_ok:
+                raise ApiError(
+                    ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
+                    "Idempotency key already used by a different request",
+                )
+            return {
+                "invocation_id": str(existing.id),
+                "status": existing.status,
+                "result": existing.result,
+                "profile_label": existing.profile_snapshot.get("profile_label"),
+                "idempotent_replay": True,
+            }
 
     # --- agent grants: agents act only on explicitly granted capabilities
     if principal_kind == PrincipalKind.AGENT.value:
@@ -146,7 +173,7 @@ def invoke_capability(
         ).all()
         now = time.time()
         grant_expired = all(
-            g.expires_at is not None and g.expires_at.timestamp() < now for g in grants
+            g.expires_at is not None and _epoch(g.expires_at) < now for g in grants
         )
         if not grants or grant_expired:
             _audit(
@@ -236,8 +263,23 @@ def invoke_capability(
         deadline_epoch_s=time.time() + PLAN_DEADLINE_S,
         nonce=uuid_module.uuid4().hex + uuid_module.uuid4().hex[:8],
     )
-    snapshot = json.loads(plan.model_dump_json())
-    snapshot["profile_label"] = profile.name
+    plan_payload = json.loads(plan.model_dump_json())
+    plan_payload["profile_label"] = profile.name
+
+    # PR-SEC-04: the database keeps a REDACTED audit snapshot only - no
+    # arguments, no secret_ref, no target address. The full plan exists
+    # solely in memory for this dispatch.
+    audit_snapshot = {
+        "profile_id": str(profile.id),
+        "profile_label": profile.name,
+        "connection_id": str(connection.id),
+        "endpoint_id": str(endpoint.id),
+        "capability_name": capability.name,
+        "capability_version": version_row.version,
+        "policy_version": version_row.policy_ref,
+        "arguments_digest": plan.arguments_digest,
+        "risk_level": version_row.risk_level,
+    }
 
     invocation = InvocationRow(
         workspace_id=workspace_id,
@@ -247,7 +289,7 @@ def invoke_capability(
         principal_id=principal_id,
         agent_id=plan.agent_id,
         profile_id=profile.id,
-        profile_snapshot=snapshot,
+        profile_snapshot=audit_snapshot,
         arguments_digest=plan.arguments_digest,
         idempotency_key=idempotency_key,
         policy_version=version_row.policy_ref,
@@ -259,11 +301,19 @@ def invoke_capability(
     # --- high-risk operations require an approved, digested approval
     if decision.approval_required:
         if approval_request_id is None:
+            from datetime import timedelta
+
+            from ppswich_db.models import utcnow
+
             approval = ApprovalRow(
                 workspace_id=workspace_id,
                 invocation_id=invocation.id,
+                requester_id=principal_id,
+                capability_version_id=version_row.id,
+                profile_id=profile.id,
                 approver_id=principal_id,  # placeholder; replaced on approval
                 arguments_digest=plan.arguments_digest,
+                expires_at=utcnow() + timedelta(minutes=APPROVAL_TTL_S // 60),
                 status="pending",
             )
             session.add(approval)
@@ -281,29 +331,53 @@ def invoke_capability(
                 "High-risk capability requires approval before execution",
                 {"approval_request_id": str(approval.id)},
             )
+        # PR-SEC-02 / SEC-024: an approval authorizes exactly ONE proposal -
+        # requester + capability version + profile + arguments - and expires.
         approval_row = session.get(ApprovalRow, approval_request_id)
-        if approval_row is None or (
-            approval_row.workspace_id != workspace_id
-            or approval_row.status != "approved"
-            or approval_row.arguments_digest != plan.arguments_digest
-        ):
+        binding_ok = approval_row is not None and (
+            approval_row.workspace_id == workspace_id
+            and approval_row.status == "approved"
+            and approval_row.requester_id == principal_id
+            and approval_row.capability_version_id == version_row.id
+            and approval_row.profile_id == profile.id
+            and approval_row.arguments_digest == plan.arguments_digest
+            and (
+                approval_row.expires_at is None
+                or _epoch(approval_row.expires_at) >= time.time()
+            )
+        )
+        if not binding_ok:
             raise ApiError(
                 ErrorCode.APPROVAL_REQUIRED,
-                "Approval missing, not approved, or arguments changed",
+                "Approval missing, expired, or bound to a different request",
             )
-        approval_row.status = "consumed"
+        from sqlalchemy import text as sql_text
+
+        assert approval_row is not None  # narrowed by binding_ok above
+        consume = session.execute(
+            sql_text(
+                "UPDATE approvals SET status = 'consumed' "
+                "WHERE id = :id AND status = 'approved'"
+            ),
+            {"id": approval_row.id.hex},
+        )
+        if getattr(consume, "rowcount", 0) == 0:
+            raise ApiError(
+                ErrorCode.APPROVAL_REQUIRED,
+                "Approval was consumed concurrently",
+            )
 
     # --- dispatch to the trusted executor with a signed, frozen snapshot
     from ppswich_executor.plan_signing import sign_plan
 
-    signature = sign_plan(snapshot, settings.internal_token)
+    signature = sign_plan(plan_payload, settings.internal_token)
     invocation.status = InvocationStatus.RUNNING.value
-    session.flush()  # snapshot is durably frozen before dispatch (SEC-017)
+    session.flush()  # the in-memory plan is frozen before dispatch (SEC-017)
 
     try:
         response = executor_client.post(
             f"{settings.executor_url}/internal/v1/execute",
-            json={"plan": snapshot, "signature": signature},
+            json={"plan": plan_payload, "signature": signature},
             headers={"X-Internal-Token": settings.internal_token},
         )
     except httpx.HTTPError as exc:

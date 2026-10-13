@@ -6,7 +6,7 @@
 >
 > 通用 API 发现、连接切换、凭证保护与 Agent 安全能力平台。
 
-**项目状态：Pre-alpha —— 首个垂直闭环已实现并通过自动化测试（2026-10-13）**  
+**项目状态：Pre-alpha —— 首竖切 + 评审安全加固（PR-SEC-01…05）完成（2026-10-13）**  
 **本仓库启动文档版本：v0.1.0，2026-10-13**  
 **品牌名称：`pp swich`；仓库 / 包名称：`pp-swich`。`swich` 为本项目拟定拼写，请勿擅自更改为 `switch`。**
 
@@ -26,6 +26,7 @@
 - React 控制台：Services / Discovery / Capabilities / Connections / Profiles（一键切换）/ Invocations / Security 七页
 - 安全测试：docs/00 的 10 个验收场景、P0 安全用例（蜜罐不落库、未发布 404、保留参数 422、越权 403、密钥失联 fail-closed、在途快照等）与仓库密钥扫描脚本
 - CI：lint / typecheck / 全量测试（双 OS）/ 密钥扫描（`.github/workflows`）
+- 安全加固（技术评审后）：Connection 所有权三段校验、管理 API 仅限人类且审核≠创建人、审批绑定不可变 Proposal（请求人+版本+档案+参数摘要+15 分钟时效）并原子消费、幂等键绑定主体（冲突 409 而非泄漏）、执行器路径段校验+最终 URL 复检+强制主机白名单+元数据段不可豁免+请求时 DNS 复验+流式限长、响应守卫输出 Schema 递归白名单投影、执行快照脱敏（不存参数/secret_ref/目标地址）、demo 模式默认关闭且生产配置不完整拒绝启动（对应攻击组合测试 SEC-021…030）
 
 **计划中、尚未实现（请勿当作已有能力）：**
 
@@ -34,6 +35,8 @@
 - OIDC / JWT audience 生产认证（当前为受控本地 dev token）
 - PostgreSQL RLS、配额与预算、审批工作台 UI、Contract drift 告警、Edge Connector / mTLS
 - SDK 的传输级生产认证（见 `packages/python-sdk` 文档中的安全声明）
+
+**demo 模式默认关闭**：`PP_SWICH_DEMO_MODE` 仅由 `scripts/dev-up.py` 显式开启；非 demo 下 dev 登录目录/mock 凭证/默认内部 token 均不可用，生产配置不完整时服务拒绝启动。
 
 **安全边界声明：** 本仓库实现的是开发态安全闭环（synthetic 数据 + mock 凭证 + fail-closed 默认值），不构成生产安全认证。威胁模型与限制见 [docs/05](docs/05-SECURITY.md) 与 [docs/18](docs/18-SECRETLESS-DEVELOPMENT.md)。
 
@@ -51,12 +54,13 @@ uv run python scripts/seed-demo.py
 
 # 4. 打开 http://localhost:5173 —— 选择 Alice 登录，然后：
 #    Discovery 导入 tests/fixtures/synthetic-har/crm.har.json
-#    -> Capabilities 创建 crm.get_customer -> Review -> Verify -> Publish
-#    -> Profiles 一键切换 CRM Demo A/B
+#    -> Capabilities 创建 crm.get_customer（Alice 为创建人）
+#    -> 退出并以 Carol 登录完成 Review -> Verify -> Publish（审核≠创建人）
+#    -> 回到 Alice：Profiles 一键切换 CRM Demo A/B
 #    -> Invocations 调用并观察数据集随档案切换
 ```
 
-测试：`uv run pytest`（122 个用例，含三服务真实 E2E）；检查：`uv run ruff check . && uv run mypy packages apps`。
+测试：`uv run pytest`（145 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030）；检查：`uv run ruff check . && uv run mypy packages apps`。
 
 ## 解决什么问题
 
@@ -115,6 +119,7 @@ uv run python scripts/seed-demo.py
 | **AI 编码助手与 `.env` 密钥隔离（核心）** | **[18-SECRETLESS-DEVELOPMENT](docs/18-SECRETLESS-DEVELOPMENT.md)** |
 | 首批可直接交给编码 Agent 的任务 | [19-FIRST-CODING-TASKS](docs/19-FIRST-CODING-TASKS.md) |
 | **v0.1.0 首竖切实现审核报告（送审）** | **[20-IMPLEMENTATION-REVIEW](docs/20-IMPLEMENTATION-REVIEW.md)** |
+| **技术评审回复与安全加固记录（v0.1.1）** | **[21-REVIEW-RESPONSE](docs/21-REVIEW-RESPONSE.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 
