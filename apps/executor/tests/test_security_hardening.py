@@ -9,8 +9,8 @@ import uuid
 
 import pytest
 from fastapi.testclient import TestClient
-from ppswich_executor.main import DEFAULT_INTERNAL_TOKEN, ExecutorSettings, create_app
-from ppswich_executor.plan_signing import sign_plan
+from ppswitch_executor.main import DEFAULT_INTERNAL_TOKEN, ExecutorSettings, create_app
+from ppswitch_executor.plan_signing import sign_plan
 
 
 def _client(provider=None) -> TestClient:
@@ -84,9 +84,9 @@ class TestSEC026PathManipulation:
         "a%2Fb",
     ])
     def test_hostile_path_arguments_cannot_change_the_route(self, hostile) -> None:
-        from ppswich_core.entities import InvocationPlan, InvocationPlanOperation
-        from ppswich_core.errors import ApiError
-        from ppswich_executor.adapters.http_adapter import HttpAdapter
+        from ppswitch_core.entities import InvocationPlan, InvocationPlanOperation
+        from ppswitch_core.errors import ApiError
+        from ppswitch_executor.adapters.http_adapter import HttpAdapter
 
         plan = InvocationPlan(
             invocation_id=uuid.uuid4(),
@@ -125,8 +125,8 @@ class TestSEC027HostWhitelistAndMetadata:
 
     def test_public_host_not_in_whitelist_rejected(self) -> None:
         """Public targets are no longer implicitly allowed (review PR-SEC-03)."""
-        from ppswich_core.errors import ApiError
-        from ppswich_executor.network_policy import check_outbound_target
+        from ppswitch_core.errors import ApiError
+        from ppswitch_executor.network_policy import check_outbound_target
 
         with pytest.raises(ApiError) as excinfo:
             check_outbound_target(
@@ -138,8 +138,8 @@ class TestSEC027HostWhitelistAndMetadata:
 
     def test_metadata_ip_denied_even_when_approved(self) -> None:
         """Link-local / metadata ranges can never be approved away."""
-        from ppswich_core.errors import ApiError
-        from ppswich_executor.network_policy import check_outbound_target
+        from ppswitch_core.errors import ApiError
+        from ppswitch_executor.network_policy import check_outbound_target
 
         with pytest.raises(ApiError) as excinfo:
             check_outbound_target(
@@ -154,15 +154,15 @@ class TestSEC027HostWhitelistAndMetadata:
         was safe at check time but answers with a metadata IP at request
         time is refused before any bytes are sent (SEC-008)."""
         import httpx
-        from ppswich_core.entities import (
+        from ppswitch_core.entities import (
             InvocationPlan,
             InvocationPlanOperation,
         )
-        from ppswich_executor.adapters.http_adapter import (
+        from ppswitch_executor.adapters.http_adapter import (
             HttpAdapter,
             NetworkPolicyViolation,
         )
-        from ppswich_executor.network_policy import check_outbound_target
+        from ppswitch_executor.network_policy import check_outbound_target
 
         def rebind_resolver(host: str) -> list[str]:
             return ["169.254.169.254"]  # metadata answer at request time
@@ -206,7 +206,7 @@ class TestSEC027HostWhitelistAndMetadata:
 
 class TestSEC028NestedSecretLeakage:
     def test_nested_api_key_dropped_even_without_regex_match(self) -> None:
-        from ppswich_executor.response_guard import project_response
+        from ppswitch_executor.response_guard import project_response
 
         body = {
             "id": "C-1",
@@ -223,7 +223,7 @@ class TestSEC028NestedSecretLeakage:
         assert "api_key" in guarded.dropped_fields
 
     def test_schema_guided_recursive_projection(self) -> None:
-        from ppswich_executor.response_guard import project_response
+        from ppswitch_executor.response_guard import project_response
 
         schema = {
             "type": "object",
@@ -251,7 +251,7 @@ class TestSEC028NestedSecretLeakage:
         assert set(guarded.dropped_fields) >= {"internal_note", "secret_field"}
 
     def test_type_mismatch_nulls_value(self) -> None:
-        from ppswich_executor.response_guard import project_response
+        from ppswitch_executor.response_guard import project_response
 
         schema = {
             "type": "object",

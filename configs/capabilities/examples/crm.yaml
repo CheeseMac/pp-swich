@@ -1,6 +1,6 @@
 # Example internal capability contract (docs/04-CAPABILITY-CONTRACT.md).
 # Commit-safe: no endpoints, no credentials, no secret refs.
-apiVersion: pp-swich.dev/v1
+apiVersion: pp-switch.dev/v1
 kind: Capability
 metadata:
   name: crm.get_customer

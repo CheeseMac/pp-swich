@@ -1,0 +1,45 @@
+"""pp switch persistence package: ORM models, Alembic migrations, session utils."""
+
+from ppswitch_db.models import (
+    ActiveBindingRow,
+    AgentGrantRow,
+    ApprovalRow,
+    AuditEventRow,
+    Base,
+    CapabilityRow,
+    CapabilityVersionRow,
+    ConnectionRow,
+    EndpointRow,
+    InvocationRow,
+    ObservationRow,
+    OperationRow,
+    OperationVersionRow,
+    PrincipalRow,
+    ProfileRow,
+    ServiceRow,
+    WorkspaceRow,
+)
+from ppswitch_db.session import create_engine_for_url, create_session_factory, make_session
+
+__all__ = [
+    "ActiveBindingRow",
+    "AgentGrantRow",
+    "ApprovalRow",
+    "AuditEventRow",
+    "Base",
+    "CapabilityRow",
+    "CapabilityVersionRow",
+    "ConnectionRow",
+    "EndpointRow",
+    "InvocationRow",
+    "ObservationRow",
+    "OperationRow",
+    "OperationVersionRow",
+    "PrincipalRow",
+    "ProfileRow",
+    "ServiceRow",
+    "WorkspaceRow",
+    "create_engine_for_url",
+    "create_session_factory",
+    "make_session",
+]

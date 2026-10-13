@@ -68,9 +68,9 @@
 
 设计：
 ```python
-from ppswich import PPSwichClient
+from ppswitch import PPSwitchClient
 
-pp = PPSwichClient.from_local_broker()
+pp = PPSwitchClient.from_local_broker()
 result = pp.invoke("crm.get_customer", {"customer_id": "C-1024"})
 ```
 

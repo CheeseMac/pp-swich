@@ -29,7 +29,7 @@
 | Apache APISIX | https://github.com/apache/apisix | 传统 API 网关和 OpenAPI/MCP 参考 |
 | Higress | https://github.com/higress-group/higress | AI/API 网关参考 |
 
-不把某一个大型网关作为 MVP 的强制依赖；pp swich 最独特的价值是**发现、共享、切换、秘密隔离与可信执行**。
+不把某一个大型网关作为 MVP 的强制依赖；pp switch 最独特的价值是**发现、共享、切换、秘密隔离与可信执行**。
 
 ## 3. 密钥管理与模型代理
 
@@ -43,7 +43,7 @@
 | OPA | https://github.com/open-policy-agent/opa | 复杂策略判断候选 |
 | OWASP Secure Coding with AI | https://cheatsheetseries.owasp.org/cheatsheets/Secure_Coding_with_AI_Cheat_Sheet.html | AI 辅助开发中的密钥和沙箱边界 |
 
-**注意**：现有模型代理通常提供“虚拟 Key”模式；虚拟 Key 是比供应商主密钥更有限的授权凭据，但仍属于秘密，若 AI 进程能读取，可能被滥用。pp swich 的默认强安全方式是受信任 Broker 在自己内部持有/使用下游凭证，公开 SDK 只发能力调用。
+**注意**：现有模型代理通常提供“虚拟 Key”模式；虚拟 Key 是比供应商主密钥更有限的授权凭据，但仍属于秘密，若 AI 进程能读取，可能被滥用。pp switch 的默认强安全方式是受信任 Broker 在自己内部持有/使用下游凭证，公开 SDK 只发能力调用。
 
 ## 4. 其他候选
 
@@ -55,7 +55,7 @@
 
 ## 5. 借鉴与自研界限
 
-| 应直接使用成熟组件 | 应由 pp swich 自研 |
+| 应直接使用成熟组件 | 应由 pp switch 自研 |
 |---|---|
 | OAuth/OIDC 标准、TLS/KMS、数据库驱动 | API Observation 归一化/去重 |
 | OpenAPI / JSON Schema 解析器 | 多人贡献的 Capability Registry |

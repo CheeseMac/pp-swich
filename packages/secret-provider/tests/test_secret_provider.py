@@ -1,6 +1,6 @@
 import pytest
-from ppswich_core.enums import AuthScheme
-from ppswich_secrets import (
+from ppswitch_core.enums import AuthScheme
+from ppswitch_secrets import (
     MockSecretProvider,
     SecretProvider,
     SecretProviderUnavailable,

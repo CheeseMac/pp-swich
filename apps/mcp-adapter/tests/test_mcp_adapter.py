@@ -3,8 +3,8 @@ client-server round trip over in-memory streams."""
 
 from __future__ import annotations
 
-from ppswich import LocalBrokerTransport, PPSwichClient
-from ppswich_mcp.registry import (
+from ppswitch import LocalBrokerTransport, PPSwitchClient
+from ppswitch_mcp.registry import (
     build_tool_function,
     capability_name_for,
     mcp_tool_name,
@@ -18,7 +18,7 @@ def test_tool_name_mapping_roundtrip() -> None:
 
 def test_built_function_exposes_reviewed_parameters() -> None:
     fn = build_tool_function(
-        PPSwichClient(LocalBrokerTransport()),
+        PPSwitchClient(LocalBrokerTransport()),
         "crm.get_customer",
         {
             "type": "object",
@@ -48,7 +48,7 @@ def inspect_empty():
 def test_built_function_invokes_client() -> None:
     transport = LocalBrokerTransport()
     fn = build_tool_function(
-        PPSwichClient(transport),
+        PPSwitchClient(transport),
         "crm.get_customer",
         {
             "type": "object",
@@ -73,7 +73,7 @@ class TestProtocolRoundTrip:
         import anyio
         from mcp import ClientSession
         from mcp.shared.memory import create_client_server_memory_streams
-        from ppswich_mcp.server import build_mcp_server
+        from ppswitch_mcp.server import build_mcp_server
 
         class FakeTransport:
             """Pretend to be the control plane for list+invoke."""
@@ -115,7 +115,7 @@ class TestProtocolRoundTrip:
                     }
                 raise AssertionError(f"unexpected {method} {path}")
 
-        fake_client = PPSwichClient(FakeTransport())
+        fake_client = PPSwitchClient(FakeTransport())
         server = build_mcp_server("http://control.test", "dev-token", client=fake_client)
 
         async def scenario() -> None:

@@ -44,7 +44,7 @@
 - 若发现潜在敏感字段且无法安全清洗，拒绝上传该 Observation；
 - 中央接收服务再次验证脱敏版本与禁止字段。
 
-不得假设 `mitmproxy2swagger`、普通 HAR 转换器或 Chrome 采集插件自带满足企业要求的隐私过滤器；pp swich 必须实现自己的脱敏管道并测试。
+不得假设 `mitmproxy2swagger`、普通 HAR 转换器或 Chrome 采集插件自带满足企业要求的隐私过滤器；pp switch 必须实现自己的脱敏管道并测试。
 
 ## 3. 统一 Observation 结构
 

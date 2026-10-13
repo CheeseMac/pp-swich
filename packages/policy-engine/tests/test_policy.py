@@ -1,5 +1,5 @@
 import pytest
-from ppswich_core.enums import (
+from ppswitch_core.enums import (
     CapabilityStatus,
     ConnectionStatus,
     EndpointStatus,
@@ -7,8 +7,8 @@ from ppswich_core.enums import (
     ProfileStatus,
     RiskLevel,
 )
-from ppswich_core.errors import ApiError, ErrorCode
-from ppswich_policy import evaluate_invocation, validate_arguments
+from ppswitch_core.errors import ApiError, ErrorCode
+from ppswitch_policy import evaluate_invocation, validate_arguments
 
 
 def _ok_kwargs(**overrides):

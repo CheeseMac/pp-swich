@@ -1,0 +1,13 @@
+# Commit-safe example configuration, no downstream API credentials
+project: pp-switch-demo
+workspace: demo
+bindings:
+  crm:
+    capability_namespace: crm
+    profile: crm-demo
+  llm:
+    capability_namespace: llm
+    profile: llm-fast
+runtime:
+  broker: local
+  isolation: required

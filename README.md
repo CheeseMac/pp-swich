@@ -1,6 +1,6 @@
-# pp swich
+# pp switch
 
-![pp swich cover](assets/pp-swich-github-cover.png)
+![pp switch cover](assets/pp-switch-github-cover.png)
 
 > **Discover APIs. Switch Profiles. Protect Secrets. Empower Agents.**
 >
@@ -8,7 +8,7 @@
 
 **项目状态：Pre-alpha —— 首竖切 + 评审安全加固（PR-SEC-01…05）完成（2026-10-13）**  
 **本仓库启动文档版本：v0.1.0，2026-10-13**  
-**品牌名称：`pp swich`；仓库 / 包名称：`pp-swich`。`swich` 为本项目拟定拼写，请勿擅自更改为 `switch`。**
+**品牌名称：`pp switch`；仓库 / 包名称：`pp-switch`。**
 
 ## 当前实现状态（诚实清单）
 
@@ -21,7 +21,7 @@
 - 能力注册与审核发布：review → verify → publish 工作流 + 输出白名单
 - 连接与档案：Connection（仅存 `secret_ref`，不存明文）、Profile（同 Service 对齐校验）、一键切换（409 版本冲突保护）
 - 受信执行器：HMAC 签名的执行计划 + 防重放 + 二次参数校验 + SSRF 网络策略（默认拒绝私网/元数据地址）+ 响应守卫（白名单投影、密钥形状脱敏、大小限额）
-- Secretless 公开 SDK `import ppswich`：仅 `invoke / list_capabilities / profile_status`，无任何 `get_secret` 面
+- Secretless 公开 SDK `import ppswitch`：仅 `invoke / list_capabilities / profile_status`，无任何 `get_secret` 面
 - MCP 适配器（官方 `mcp` v2 SDK，stdio）：`tools/list` 按发布能力过滤，`tools/call` 走同一调用链
 - React 控制台：Services / Discovery / Capabilities / Connections / Profiles（一键切换）/ Invocations / Security 七页
 - 安全测试：docs/00 的 10 个验收场景、P0 安全用例（蜜罐不落库、未发布 404、保留参数 422、越权 403、密钥失联 fail-closed、在途快照等）与仓库密钥扫描脚本
@@ -36,7 +36,7 @@
 - PostgreSQL RLS、配额与预算、审批工作台 UI、Contract drift 告警、Edge Connector / mTLS
 - SDK 的传输级生产认证（见 `packages/python-sdk` 文档中的安全声明）
 
-**demo 模式默认关闭**：`PP_SWICH_DEMO_MODE` 仅由 `scripts/dev-up.py` 显式开启；非 demo 下 dev 登录目录/mock 凭证/默认内部 token 均不可用，生产配置不完整时服务拒绝启动。
+**demo 模式默认关闭**：`PP_SWITCH_DEMO_MODE` 仅由 `scripts/dev-up.py` 显式开启；非 demo 下 dev 登录目录/mock 凭证/默认内部 token 均不可用，生产配置不完整时服务拒绝启动。
 
 **安全边界声明：** 本仓库实现的是开发态安全闭环（synthetic 数据 + mock 凭证 + fail-closed 默认值），不构成生产安全认证。威胁模型与限制见 [docs/05](docs/05-SECURITY.md) 与 [docs/18](docs/18-SECRETLESS-DEVELOPMENT.md)。
 
@@ -66,7 +66,7 @@ uv run python scripts/seed-demo.py
 
 人在日常工作中使用许多网页、内部系统和 API，但这些系统的接口通常缺少统一发现、统一目录和统一授权机制。Agent 既不知道有哪些能力，也不能安全地直接持有人的密钥。
 
-`pp swich` 希望形成以下闭环：
+`pp switch` 希望形成以下闭环：
 
 **授权发现 → 本地脱敏 → 接口归集 → 契约验证 → 能力发布 → 选择连接档案 → 服务端授权执行 → 安全返回 Agent**
 
@@ -75,9 +75,9 @@ uv run python scripts/seed-demo.py
 1. **Discover**：导入 OpenAPI、HAR、Postman；从经用户授权的网页网络流量中识别候选 API；发现数据库 schema。
 2. **Catalog**：将重复 API 合并为版本化的 `Service → Operation → Capability` 目录，支持个人/团队/企业共享。
 3. **Switch**：类似“点击切换配置档案”的桌面工具，一个点击就切换当前工作区、目标服务使用的**连接配置档案**（账号授权 + 已审核端点），但绝不向模型暴露凭证。
-4. **Secure**：凭证存储在受信任的本地/服务端；用户和 Agent 双重授权；敏感操作审批；日志脱敏和网络出口约束。**Secretless Development**：源代码只引用能力别名，应用通过 pp swich Broker/Executor 调用真实 API，避免把供应商密钥放在 AI Coding Agent 可读取的 `.env`。
+4. **Secure**：凭证存储在受信任的本地/服务端；用户和 Agent 双重授权；敏感操作审批；日志脱敏和网络出口约束。**Secretless Development**：源代码只引用能力别名，应用通过 pp switch Broker/Executor 调用真实 API，避免把供应商密钥放在 AI Coding Agent 可读取的 `.env`。
 5. **Expose**：把获批 Capability 通过受控 HTTP API 和 MCP 暴露给 Agent；未来兼容更多 Agent 工具协议。
-6. **Extend**：新系统优先提供 OpenAPI + 标准身份协议 + 可选 `x-pp-swich` 扩展，实现低成本接入。
+6. **Extend**：新系统优先提供 OpenAPI + 标准身份协议 + 可选 `x-pp-switch` 扩展，实现低成本接入。
 
 ## 一键切换的准确含义
 
@@ -137,7 +137,7 @@ uv run python scripts/seed-demo.py
 
 ## 安全的初始化配置样例
 
-仓库内附带 [`.env.example`](.env.example)、[`pp-swich.example.yaml`](pp-swich.example.yaml) 和 [`.gitignore`](.gitignore)。这些**只是非秘密配置示例**；`.gitignore` 只能降低误提交风险，不能阻止拥有文件系统权限的 AI 编码助手读取文件。因此真正的生产 Key 仍必须留在独立 Broker/Executor 的 SecretProvider 中。
+仓库内附带 [`.env.example`](.env.example)、[`pp-switch.example.yaml`](pp-switch.example.yaml) 和 [`.gitignore`](.gitignore)。这些**只是非秘密配置示例**；`.gitignore` 只能降低误提交风险，不能阻止拥有文件系统权限的 AI 编码助手读取文件。因此真正的生产 Key 仍必须留在独立 Broker/Executor 的 SecretProvider 中。
 
 ## 给 AI 编码助手的入口
 

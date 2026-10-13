@@ -1,7 +1,7 @@
 # 21 · 技术评审回复与安全加固记录（v0.1.1）
 
 > **面向读者**：评审人（_blueprint 作者_）。
-> **输入**：《pp swich v0.1.0 项目技术评审》（有条件通过）。
+> **输入**：《pp switch v0.1.0 项目技术评审》（有条件通过）。
 > **输出**：本文档 + 提交 `review-fixes` 系列（PR-SEC-01…05 全部落地）。
 > **验证基线**：145 个自动化测试（新增 23 个攻击组合测试）、ruff/mypy 零错误、CI 双 OS 全绿。
 
@@ -102,7 +102,7 @@ PR-FEAT-07。数据库/MCP Session/UI 的 Delegation 改造按路线图 v0.5。
 |---|---|---|
 | D-1 Multipart 导入 | 有条件批准 + 读取限额 | ✅ 分块读取上限 5MB + 深层 JSON 拒绝（RecursionError → 400）；异步化留待批量导入需求 |
 | D-2 review/verify 端点 | 批准 + 审核角色 | ✅ 已加 human-only + 异人审核（完整角色系统 PR-FEAT-07） |
-| D-3 Dev 目录免鉴权 | 必须收紧 | ✅ demo 默认**关闭**（`PP_SWICH_DEMO_MODE` 默认 false）；非 demo 下端点 404（SEC-030）；服务仅绑 127.0.0.1 |
+| D-3 Dev 目录免鉴权 | 必须收紧 | ✅ demo 默认**关闭**（`PP_SWITCH_DEMO_MODE` 默认 false）；非 demo 下端点 404（SEC-030）；服务仅绑 127.0.0.1 |
 | D-4 确定性 Mock | 仅限 Mock 用途 | ✅ `MockSecretProvider` 注释明令禁止真实凭证/生产网络；非 demo 下执行器拒绝一切 `mock://` 凭证引用与 mock 传输（SEC-030） |
 | D-5 Agent 绑定 | 不批准 | ✅ 转入 ADR-001 重设计（§2）；过渡期护栏如上 |
 | D-6 审批流 | 架构批准代码待修 | ✅ 本轮完成角色 + 全量绑定 + 过期 + 原子消费 |
@@ -144,7 +144,7 @@ PR-FEAT-07。数据库/MCP Session/UI 的 Delegation 改造按路线图 v0.5。
 ## 6. 复核指南
 
 ```bash
-git clone https://github.com/CheeseMac/pp-swich && cd pp-swich
+git clone https://github.com/CheeseMac/pp-switch && cd pp-switch
 uv sync --all-packages
 uv run pytest            # 145 用例，含 SEC-021..030
 uv run ruff check . && uv run mypy packages apps

@@ -34,7 +34,7 @@
 ## ADR-005：密钥留在可信 Executor，公共 SDK 不提供明文提取
 
 **状态**：Accepted, P0  
-**决定**：项目 `.env` 仅保存别名与非秘密配置；业务代码调用 pp swich Capability。  
+**决定**：项目 `.env` 仅保存别名与非秘密配置；业务代码调用 pp switch Capability。  
 **重要限制**：如果 AI Agent 与可访问生产的 App 同权限域，可滥用调用，需 OS/容器/VM 隔离。  
 **备选**：运行时注入 env Token。  
 **拒绝理由**：对能读进程环境的开发 Agent 无强密钥隔离，作为受限迁移模式而非默认。

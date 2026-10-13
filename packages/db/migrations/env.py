@@ -1,4 +1,4 @@
-"""Alembic environment for pp swich migrations."""
+"""Alembic environment for pp switch migrations."""
 
 from __future__ import annotations
 
@@ -9,16 +9,16 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-# make ppswich_db importable when alembic runs from the package directory
+# make ppswitch_db importable when alembic runs from the package directory
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from ppswich_db.models import Base
+from ppswitch_db.models import Base
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-db_url = os.environ.get("PP_SWICH_DB_URL") or config.get_main_option("sqlalchemy.url") or ""
+db_url = os.environ.get("PP_SWITCH_DB_URL") or config.get_main_option("sqlalchemy.url") or ""
 config.set_main_option("sqlalchemy.url", db_url)
 
 target_metadata = Base.metadata

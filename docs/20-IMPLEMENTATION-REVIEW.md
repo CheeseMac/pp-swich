@@ -1,8 +1,8 @@
 # 20 · 首竖切实现审核报告（v0.1.0）
 
-> **面向读者**：pp swich 蓝图作者 / 设计审核。
+> **面向读者**：pp switch 蓝图作者 / 设计审核。
 > **送审内容**：按 `docs/00-START-HERE.md` 第 3 节"第一张竖切"与 `docs/19` Task 001–010 完成的实现，请求对第 4 节列出的**实现偏差与决策点**逐条审核。
-> **日期**：2026-10-13 · **仓库**：https://github.com/CheeseMac/pp-swich · **审核基线提交**：`e42e40a`（CI 双工作流全绿）
+> **日期**：2026-10-13 · **仓库**：https://github.com/CheeseMac/pp-switch · **审核基线提交**：`e42e40a`（CI 双工作流全绿）
 
 ---
 
@@ -26,7 +26,7 @@
 
 ```
 packages/  core(领域契约) db(ORM+Alembic) discovery-sdk policy-engine
-           secret-provider python-sdk(import ppswich)
+           secret-provider python-sdk(import ppswitch)
 apps/      control-api(FastAPI) executor(受信执行) mcp-adapter(官方mcp v2)
            demo-mock-crm(双数据集合成后端) web-console(React七页)
 tests/     fixtures/synthetic-har · security · e2e(真实三服务器)
@@ -42,7 +42,7 @@ deployments/compose/  Dockerfile.python + docker-compose.yml(PostgreSQL)
 ## 2. 演示路径（审核者 5 分钟走查）
 
 ```bash
-git clone https://github.com/CheeseMac/pp-swich && cd pp-swich
+git clone https://github.com/CheeseMac/pp-switch && cd pp-switch
 uv sync --all-packages && pnpm install
 uv run python scripts/dev-up.py --ui        # 8911/8912/8913 + 5173
 uv run python scripts/seed-demo.py          # 另一终端；打印合成 dev token
@@ -64,12 +64,12 @@ Security 页查看脱敏审计。
 | 任务 | 完成判据（蓝图原文） | 实际证据 |
 |---|---|---|
 | 001 Monorepo | lint/typecheck/unit 可运行，CI 验证无蜜罐泄漏 | uv workspace + pnpm；ruff/mypy/pytest 双 OS CI；security.yml 蜜罐扫描 |
-| 002 领域契约 | schema 测试、跨 Service/Workspace 越权测试通过 | `ppswich_core`（含 Profile 对齐校验、secret_ref 公共投影禁出、发布版不可变验证）19 用例 |
+| 002 领域契约 | schema 测试、跨 Service/Workspace 越权测试通过 | `ppswitch_core`（含 Profile 对齐校验、secret_ref 公共投影禁出、发布版不可变验证）19 用例 |
 | 003 迁移+仓库 | 空库迁移、重复迁移、Profile 并发测试通过 | Alembic×2；空库/重复升级/乐观锁并发（一对一胜者）/复合外键跨 workspace 拦截，3 用例 |
 | 004 清洗 HAR | 2–3 候选 Operation；蜜罐不落库 | sanitize/normalize/fingerprint/infer 四纯函数 + 合成夹具；19 用例含 3 路径合并、GraphQL 分离、类型冲突标记 |
 | 005 Profile 切换 API | 授权切换、409 冲突、跨用户拒绝、UI 显示 | GET/PUT active-bindings（乐观锁）；e2e 证实在途快照（SEC-017）与切换后生效语义 |
 | 006 受信 Mock Executor | 无 .env 完成调用 | 独立进程；HMAC 计划签名+nonce+deadline；mock CRM 双账号数据集；仅输出 id/display_name；审计无秘密 |
-| 007 Secretless SDK | 仅别名+参数，mock 可执行，含错误测试 | `import ppswich`：invoke/list_capabilities/profile_status；**无 get_secret 面（有测试锁定公开面）** |
+| 007 Secretless SDK | 仅别名+参数，mock 可执行，含错误测试 | `import ppswitch`：invoke/list_capabilities/profile_status；**无 get_secret 面（有测试锁定公开面）** |
 | 008 MCP adapter | 标准客户端调用同一 mock CRM；跨租户拒绝 | 官方 mcp 2.3.0；协议级 client-server 内存往返测试 + e2e tools/list/call |
 | 009 首版 UI | 浏览器完成 HAR→Draft→Publish→Switch→Invoke | React 七页；浏览器实测全流程（登录→导入→三步发布→A/B 切换→调用→审计截图） |
 | 010 安全门 | CI 自动失败可泄露凭证/越权的 PR | 10 场景 + P0 矩阵 + 密钥扫描 + 蜜罐位置检查全部进 CI |
@@ -118,7 +118,7 @@ Security 页查看脱敏审计。
 
 ### D-3 Dev 登录目录免鉴权
 - 蓝图：05 §2 身份只来自已验证凭据；未定义登录页如何获得第一个凭据。
-- 实现：`GET /api/v1/dev/principals` **免鉴权**（仅 `PP_SWICH_DEMO_MODE=true` 时存在，否则 404），返回 `data/dev-tokens.json`（seed 脚本写入的本地运行时文件，gitignored）中的合成 token。
+- 实现：`GET /api/v1/dev/principals` **免鉴权**（仅 `PP_SWITCH_DEMO_MODE=true` 时存在，否则 404），返回 `data/dev-tokens.json`（seed 脚本写入的本地运行时文件，gitignored）中的合成 token。
 - 理由：demo 登录引导需要一个受控起点；token 均为合成值，离开本机 demo 无效。
 - 备选：改为 UI 手动粘贴 token（已同时支持）。
 
@@ -157,7 +157,7 @@ Security 页查看脱敏审计。
 ## 6. 已知限制与残余风险（已同步到 README）
 
 1. **DNS rebinding 残余窗口**（SEC-008）：目标域解析校验与实际连接之间未钉扎 IP。缓解：仅白名单 endpoint、禁重定向、方案/主机全量校验。计划：自定义 httpx transport 固定解析结果。
-2. **SDK 传输认证为合成 dev token**：`PPSwichClient.from_http` 尚无 OAuth audience/工作负载身份，不可宣称生产安全（SDK 文档已声明）。
+2. **SDK 传输认证为合成 dev token**：`PPSwitchClient.from_http` 尚无 OAuth audience/工作负载身份，不可宣称生产安全（SDK 文档已声明）。
 3. **PostgreSQL 只提供了部署基线**（compose + psycopg 驱动），CI 未跑 PG 集成矩阵（蓝图 E0-02 验收项之一）；当前全部迁移/测试在 SQLite。另：审计 TTL、观察数据 30 天过期、配额（QUOTA_EXCEEDED 仅定义错误码）未实现。
 
 ## 7. 未实现（蓝图阶段 6–7，README 已列）

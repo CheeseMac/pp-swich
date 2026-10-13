@@ -1,7 +1,7 @@
 import uuid
 
 import pytest
-from ppswich_core.entities import (
+from ppswitch_core.entities import (
     ActiveBinding,
     Capability,
     CapabilityVersion,
@@ -71,7 +71,7 @@ def test_active_binding_context_key_whitelist() -> None:
 def test_profile_alignment_accepts_same_service() -> None:
     ws, principal = _ids()[0], _ids()[0]
     service_id, endpoint_id, connection_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    from ppswich_core.entities import Service
+    from ppswitch_core.entities import Service
 
     service = Service(id=service_id, workspace_id=ws, slug="crm", name="CRM",
                       owner_principal_id=principal)
@@ -88,7 +88,7 @@ def test_profile_alignment_accepts_same_service() -> None:
 def test_profile_alignment_rejects_cross_service_connection() -> None:
     ws, principal = _ids()[0], _ids()[0]
     service_id = uuid.uuid4()
-    from ppswich_core.entities import Service
+    from ppswitch_core.entities import Service
 
     service = Service(id=service_id, workspace_id=ws, slug="crm", name="CRM",
                       owner_principal_id=principal)

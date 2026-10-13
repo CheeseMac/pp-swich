@@ -2,7 +2,7 @@
 
 ## 0. 安全承诺的准确表述
 
-目标是：**pp swich 的正常工具描述、模型请求和工具结果中不出现后端 API Key、用户密码、OAuth Token、Cookie、私钥或可恢复秘密材料**。必须通过设计隔离与自动化测试验证，而不是靠模型系统提示词。外部模型仍可能收到经授权的**业务结果数据**，须独立制定数据最小化和外发策略。
+目标是：**pp switch 的正常工具描述、模型请求和工具结果中不出现后端 API Key、用户密码、OAuth Token、Cookie、私钥或可恢复秘密材料**。必须通过设计隔离与自动化测试验证，而不是靠模型系统提示词。外部模型仍可能收到经授权的**业务结果数据**，须独立制定数据最小化和外发策略。
 
 **不作“绝对安全”“零知识”宣传**。如果持有访问权的 Executor 被完全攻陷，其有权使用的凭证可能泄漏；利用最小权限、短期凭证、主机与身份隔离来限制影响范围。
 
@@ -56,9 +56,9 @@ flowchart LR
 
 代码里只写：
 ```python
-from ppswich import PPSwichClient
+from ppswitch import PPSwitchClient
 
-client = PPSwichClient.from_local_broker()  # SDK 未来接口；非现成实现
+client = PPSwitchClient.from_local_broker()  # SDK 未来接口；非现成实现
 result = client.invoke(
     capability="crm.search_customers",
     arguments={"keyword": "acme"},
@@ -72,7 +72,7 @@ result = client.invoke(
 
 ### B. 兼容方案：运行时解密并注入环境变量
 
-例如 `pp-swich run -- python app.py` 将 Token 放入子进程环境，旧 SDK 可直接使用。
+例如 `pp-switch run -- python app.py` 将 Token 放入子进程环境，旧 SDK 可直接使用。
 
 **它不满足强安全目标**：同一权限域中的 AI 编码助手可以通过进程环境、debug、日志或运行代码取得 Token。最多提供迁移便利，应标记 `LEGACY_INJECTION_UNSAFE`，默认关闭，不允许开发 Agent 使用生产凭证。
 

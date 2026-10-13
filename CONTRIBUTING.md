@@ -1,4 +1,4 @@
-# Contributing to pp swich
+# Contributing to pp switch
 
 Thank you for helping build an open, secure API discovery and Agent integration platform.
 

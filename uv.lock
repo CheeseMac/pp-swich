@@ -9,17 +9,17 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "pp-swich-workspace",
-    "ppswich",
-    "ppswich-control",
-    "ppswich-core",
-    "ppswich-db",
-    "ppswich-discovery",
-    "ppswich-executor",
-    "ppswich-mcp",
-    "ppswich-mockcrm",
-    "ppswich-policy",
-    "ppswich-secrets",
+    "pp-switch-workspace",
+    "ppswitch",
+    "ppswitch-control",
+    "ppswitch-core",
+    "ppswitch-db",
+    "ppswitch-discovery",
+    "ppswitch-executor",
+    "ppswitch-mcp",
+    "ppswitch-mockcrm",
+    "ppswitch-policy",
+    "ppswitch-secrets",
 ]
 
 [[package]]
@@ -919,7 +919,7 @@ wheels = [
 ]
 
 [[package]]
-name = "pp-swich-workspace"
+name = "pp-switch-workspace"
 version = "0.1.0"
 source = { virtual = "." }
 
@@ -942,31 +942,31 @@ dev = [
 ]
 
 [[package]]
-name = "ppswich"
+name = "ppswitch"
 version = "0.1.0"
 source = { editable = "packages/python-sdk" }
 dependencies = [
     { name = "httpx" },
-    { name = "ppswich-core" },
+    { name = "ppswitch-core" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
-    { name = "ppswich-core", editable = "packages/core" },
+    { name = "ppswitch-core", editable = "packages/core" },
 ]
 
 [[package]]
-name = "ppswich-control"
+name = "ppswitch-control"
 version = "0.1.0"
 source = { editable = "apps/control-api" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "ppswich-core" },
-    { name = "ppswich-db" },
-    { name = "ppswich-discovery" },
-    { name = "ppswich-policy" },
+    { name = "ppswitch-core" },
+    { name = "ppswitch-db" },
+    { name = "ppswitch-discovery" },
+    { name = "ppswitch-policy" },
     { name = "psycopg", extra = ["binary"] },
     { name = "python-multipart" },
     { name = "uvicorn" },
@@ -976,17 +976,17 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "ppswich-core", editable = "packages/core" },
-    { name = "ppswich-db", editable = "packages/db" },
-    { name = "ppswich-discovery", editable = "packages/discovery-sdk" },
-    { name = "ppswich-policy", editable = "packages/policy-engine" },
+    { name = "ppswitch-core", editable = "packages/core" },
+    { name = "ppswitch-db", editable = "packages/db" },
+    { name = "ppswitch-discovery", editable = "packages/discovery-sdk" },
+    { name = "ppswitch-policy", editable = "packages/policy-engine" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "python-multipart", specifier = ">=0.0.9" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [[package]]
-name = "ppswich-core"
+name = "ppswitch-core"
 version = "0.1.0"
 source = { editable = "packages/core" }
 dependencies = [
@@ -997,7 +997,7 @@ dependencies = [
 requires-dist = [{ name = "pydantic", specifier = ">=2.9" }]
 
 [[package]]
-name = "ppswich-db"
+name = "ppswitch-db"
 version = "0.1.0"
 source = { editable = "packages/db" }
 dependencies = [
@@ -1012,30 +1012,30 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ppswich-discovery"
+name = "ppswitch-discovery"
 version = "0.1.0"
 source = { editable = "packages/discovery-sdk" }
 dependencies = [
-    { name = "ppswich-core" },
+    { name = "ppswitch-core" },
     { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "ppswich-core", editable = "packages/core" },
+    { name = "ppswitch-core", editable = "packages/core" },
     { name = "pydantic", specifier = ">=2.9" },
 ]
 
 [[package]]
-name = "ppswich-executor"
+name = "ppswitch-executor"
 version = "0.1.0"
 source = { editable = "apps/executor" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
-    { name = "ppswich-core" },
-    { name = "ppswich-policy" },
-    { name = "ppswich-secrets" },
+    { name = "ppswitch-core" },
+    { name = "ppswitch-policy" },
+    { name = "ppswitch-secrets" },
     { name = "uvicorn" },
 ]
 
@@ -1043,31 +1043,31 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
-    { name = "ppswich-core", editable = "packages/core" },
-    { name = "ppswich-policy", editable = "packages/policy-engine" },
-    { name = "ppswich-secrets", editable = "packages/secret-provider" },
+    { name = "ppswitch-core", editable = "packages/core" },
+    { name = "ppswitch-policy", editable = "packages/policy-engine" },
+    { name = "ppswitch-secrets", editable = "packages/secret-provider" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [[package]]
-name = "ppswich-mcp"
+name = "ppswitch-mcp"
 version = "0.1.0"
 source = { editable = "apps/mcp-adapter" }
 dependencies = [
     { name = "httpx" },
     { name = "mcp" },
-    { name = "ppswich-core" },
+    { name = "ppswitch-core" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "mcp", specifier = ">=1.2" },
-    { name = "ppswich-core", editable = "packages/core" },
+    { name = "ppswitch-core", editable = "packages/core" },
 ]
 
 [[package]]
-name = "ppswich-mockcrm"
+name = "ppswitch-mockcrm"
 version = "0.1.0"
 source = { editable = "apps/demo-mock-crm" }
 dependencies = [
@@ -1082,30 +1082,30 @@ requires-dist = [
 ]
 
 [[package]]
-name = "ppswich-policy"
+name = "ppswitch-policy"
 version = "0.1.0"
 source = { editable = "packages/policy-engine" }
 dependencies = [
     { name = "jsonschema" },
-    { name = "ppswich-core" },
+    { name = "ppswitch-core" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "jsonschema", specifier = ">=4.23" },
-    { name = "ppswich-core", editable = "packages/core" },
+    { name = "ppswitch-core", editable = "packages/core" },
 ]
 
 [[package]]
-name = "ppswich-secrets"
+name = "ppswitch-secrets"
 version = "0.1.0"
 source = { editable = "packages/secret-provider" }
 dependencies = [
-    { name = "ppswich-core" },
+    { name = "ppswitch-core" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ppswich-core", editable = "packages/core" }]
+requires-dist = [{ name = "ppswitch-core", editable = "packages/core" }]
 
 [[package]]
 name = "psycopg"
@@ -1621,15 +1621,15 @@ wheels = [
 
 [[package]]
 name = "starlette"
-version = "1.7.0"
+version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "typing-extensions", marker = "python_full_version < '3.13'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/2b/3850dc6bf7ef71b088962eba31dafc6cffd2f96e577ebb0bb316df96da3e/starlette-1.7.0.tar.gz", hash = "sha256:c79f74ea63cff761804fbbfb182f1e0b440c2d07b164d24700c5a1bab5d6ff5d", size = 2736246 }
+sdist = { url = "https://files.pythonhosted.org/packages/e9/0c/6efb252d091ecccd7d62048ae11f0ea35cd75a4fbaeea5e30f9c3bf91d10/starlette-1.8.0.tar.gz", hash = "sha256:1565dc0b35d5737a271ed1e0e04e949f4e81198799f216d2667b0a0fb9cf9522", size = 2730457 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/d6/1ec1b290f9e0fb067899b61e1d37a30c923068bad260b216dbe37a7d2967/starlette-1.7.0-py3-none-any.whl", hash = "sha256:67f8e99895493dd2911a03f11314af6ceebeae4e704bb9f43dfc6a9db151c93e", size = 78980 },
+    { url = "https://files.pythonhosted.org/packages/c1/b0/5742e4ac7af5eb58ec3470a537a49d7aa507e5539413e504b3a65ef50ba8/starlette-1.8.0-py3-none-any.whl", hash = "sha256:dfdd6b29c26483288088d990eee59631dedadd66ce20d203402a7ca8e3c4656f", size = 79612 },
 ]
 
 [[package]]

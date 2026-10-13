@@ -10,7 +10,7 @@ export class ApiError extends Error {
   }
 }
 
-const TOKEN_KEY = "ppswich.token";
+const TOKEN_KEY = "ppswitch.token";
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);

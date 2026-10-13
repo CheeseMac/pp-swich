@@ -263,10 +263,10 @@ class TestSEC029InvocationResultOwnership:
 class TestSEC030DemoProductionIsolation:
     def test_dev_directory_disabled_and_startup_guard(self, demo, tmp_path) -> None:
         from fastapi.testclient import TestClient
-        from ppswich_control.app import create_app
-        from ppswich_control.settings import ControlSettings
-        from ppswich_executor.main import ExecutorSettings
-        from ppswich_executor.main import create_app as create_executor_app
+        from ppswitch_control.app import create_app
+        from ppswitch_control.settings import ControlSettings
+        from ppswitch_executor.main import ExecutorSettings
+        from ppswitch_executor.main import create_app as create_executor_app
 
         # startup refuses default synthetic token outside demo mode
         with pytest.raises(RuntimeError):
@@ -296,10 +296,10 @@ class TestSEC030DemoProductionIsolation:
 
     def test_mock_credentials_rejected_outside_demo(self) -> None:
         from fastapi.testclient import TestClient
-        from ppswich_executor.main import ExecutorSettings
-        from ppswich_executor.main import create_app as create_executor_app
-        from ppswich_executor.plan_signing import sign_plan
-        from ppswich_secrets import MockSecretProvider
+        from ppswitch_executor.main import ExecutorSettings
+        from ppswitch_executor.main import create_app as create_executor_app
+        from ppswitch_executor.plan_signing import sign_plan
+        from ppswitch_secrets import MockSecretProvider
 
         provider = MockSecretProvider()
         provider.seed(

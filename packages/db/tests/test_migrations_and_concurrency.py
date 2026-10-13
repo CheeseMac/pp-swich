@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 import pytest
-from ppswich_db.models import (
+from ppswitch_db.models import (
     ActiveBindingRow,
     ConnectionRow,
     EndpointRow,
@@ -15,7 +15,7 @@ from ppswich_db.models import (
     ServiceRow,
     WorkspaceRow,
 )
-from ppswich_db.session import create_engine_for_url, create_session_factory
+from ppswitch_db.session import create_engine_for_url, create_session_factory
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 

@@ -63,7 +63,7 @@ export function App() {
     <div className="layout">
       <aside className="sidebar">
         <div className="brand">
-          pp swich
+          pp switch
           <small>console v0.1 (demo)</small>
         </div>
         {PAGES.map((p) => (

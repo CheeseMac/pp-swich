@@ -1,10 +1,10 @@
 [project]
-name = "ppswich"
+name = "ppswitch"
 version = "0.1.0"
-description = "pp swich public Python SDK: secretless capability invocation"
+description = "pp switch public Python SDK: secretless capability invocation"
 requires-python = ">=3.12"
 dependencies = [
-    "ppswich-core",
+    "ppswitch-core",
     "httpx>=0.27",
 ]
 
@@ -13,4 +13,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ppswich"]
+packages = ["src/ppswitch"]

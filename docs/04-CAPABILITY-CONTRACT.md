@@ -27,7 +27,7 @@
 ## 3. YAML 内部能力规范
 
 ```yaml
-apiVersion: pp-swich.dev/v1
+apiVersion: pp-switch.dev/v1
 kind: Capability
 metadata:
   name: crm.get_customer
@@ -206,7 +206,7 @@ stateDiagram-v2
 
 系统开发者可发布 OpenAPI 3.1 并附加：
 ```yaml
-x-pp-swich:
+x-pp-switch:
   capability: crm.get_customer
   display-name: Get customer
   category: crm

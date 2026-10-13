@@ -1,5 +1,5 @@
 {
-  "project": "pp swich",
+  "project": "pp switch",
   "revision": "v0.1.0 blueprint",
   "docs": 20,
   "files": {
@@ -27,7 +27,7 @@
       "size": 1455,
       "sha256": "c9959c1a86fa68e692f92e10c512edc99001ddf447fa6bf77e4a18dd7c0be875"
     },
-    "assets/pp-swich-github-cover.png": {
+    "assets/pp-switch-github-cover.png": {
       "size": 1754296,
       "sha256": "adb8520d97bba7f4427964f059168a5e5c8c1e55bbe5e0fd93392dfce9998554"
     },
@@ -111,7 +111,7 @@
       "size": 4858,
       "sha256": "5bb2765137ab48e76765e10868f05376c059894e5855f5d2d694029015da710b"
     },
-    "pp-swich.example.yaml": {
+    "pp-switch.example.yaml": {
       "size": 281,
       "sha256": "07564f8ac241c9a1699c40f6b78f71bbaecfffd4e64aa3faf9fb586abaa6767a"
     }

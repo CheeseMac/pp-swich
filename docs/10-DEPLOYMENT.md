@@ -48,7 +48,7 @@ openbao            SecretProvider (enterprise mode)
 
 ```mermaid
 flowchart LR
-  User["User / Agent"] --> Hub["pp swich Hub (HTTPS)"]
+  User["User / Agent"] --> Hub["pp switch Hub (HTTPS)"]
   Hub <-->|"mTLS outbound session"| Edge["Edge Connector (LAN)"]
   Edge --> ERP["Approved ERP API"]
   Edge --> DB["Approved DB View"]
@@ -85,7 +85,7 @@ runtime:
   http_timeout_seconds: 10
 ```
 
-`*.example`、`pp-swich.example.yaml` 可以进 Git；**真实 OAuth Client Secret、OpenBao SecretID、客户 API Key 均不可提交**。
+`*.example`、`pp-switch.example.yaml` 可以进 Git；**真实 OAuth Client Secret、OpenBao SecretID、客户 API Key 均不可提交**。
 
 生产组件需要的密钥/bootstrap authentication 由 OS/KMS/secret store/受信安装步骤提供，而不是放进开发项目的 `.env`。
 

@@ -8,9 +8,9 @@ import uuid
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from ppswich_executor.main import DEFAULT_INTERNAL_TOKEN, ExecutorSettings, create_app
-from ppswich_executor.plan_signing import fresh_deadline, sign_plan
-from ppswich_secrets import MockSecretProvider, UnavailableSecretProvider
+from ppswitch_executor.main import DEFAULT_INTERNAL_TOKEN, ExecutorSettings, create_app
+from ppswitch_executor.plan_signing import fresh_deadline, sign_plan
+from ppswitch_secrets import MockSecretProvider, UnavailableSecretProvider
 
 
 def _base_plan() -> dict:
@@ -159,7 +159,7 @@ class TestNetworkPolicyGate:
         assert response.json()["error"]["code"] == "UPSTREAM_FAILURE"
 
     def test_private_ip_requires_explicit_approval(self, seeded_provider, monkeypatch) -> None:
-        from ppswich_executor import main as executor_main
+        from ppswitch_executor import main as executor_main
 
         def fake_checker(url, approved_hosts, **kwargs):
             return executor_main.check_outbound_target(url, approved_hosts)
@@ -210,7 +210,7 @@ class TestSeedEndpoint:
 
 class TestResponseGuard:
     def test_canary_values_redacted_even_in_allowed_fields(self) -> None:
-        from ppswich_executor.response_guard import project_response
+        from ppswitch_executor.response_guard import project_response
 
         guarded = project_response(
             {"id": "C-1", "display_name": "Bearer CANARY_SECRET_01"},
@@ -220,7 +220,7 @@ class TestResponseGuard:
         assert guarded.result["display_name"] == "<redacted>"
 
     def test_oversized_response_rejected(self) -> None:
-        from ppswich_executor.response_guard import project_response
+        from ppswitch_executor.response_guard import project_response
 
         with pytest.raises(Exception) as excinfo:
             project_response({"id": "x" * 100_000}, ["id"], max_response_bytes=1024)

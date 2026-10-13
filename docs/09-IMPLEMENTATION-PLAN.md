@@ -5,7 +5,7 @@
 按**垂直闭环**拆分，而不是先把所有服务脚手架做好。每个迭代必须提交代码 + schema/migration + 自动测试 + 文档，保证能演示用户价值。
 
 **优先产品目标**：
-1. `pp swich` 一键切换合法 Profile；
+1. `pp switch` 一键切换合法 Profile；
 2. 无真实 `.env` 密钥也能开发/运行工具；
 3. 从脱敏的 HAR/OpenAPI 自动沉淀候选接口；
 4. 发布后 Agent 经授权调用 MCP/HTTP；
@@ -16,7 +16,7 @@
 ## 1. 阶段 0：仓库与质量门槛
 
 **任务**
-- 建立 `pp-swich` Monorepo、`uv`、`pnpm`、基础 lint、mypy、pytest。
+- 建立 `pp-switch` Monorepo、`uv`、`pnpm`、基础 lint、mypy、pytest。
 - 建立 FastAPI Control API skeleton，健康检查和统一错误格式。
 - 增加 SQLite dev / PostgreSQL compose，创建 Alembic 迁移。
 - 实施 `.gitignore`、secret scan 和合成测试 fixture。
@@ -93,7 +93,7 @@
 **用户故事**：`pp.invoke("crm.get_customer", {"customer_id": "C-1024"})` 通过受信执行器请求后端；源码无 API Key。
 
 **任务**
-- 定义 Python SDK `PPSwichClient`（先 mock local broker transport）；
+- 定义 Python SDK `PPSwitchClient`（先 mock local broker transport）；
 - 封装已批准请求：固定 method/host/path/参数映射；
 - 实现 Policy 决策、Profile 快照、调用超时/配额/错误转换；
 - SecretProvider 插件：mock → dev OS secure storage → OpenBao enterprise；

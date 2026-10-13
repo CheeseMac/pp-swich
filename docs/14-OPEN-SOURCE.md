@@ -2,7 +2,7 @@
 
 ## 1. 项目目标
 
-`pp swich` 希望被个人开发者、企业平台工程师和 Agent 应用团队广泛采用：**能本地部署、可信使用、容易贡献、无供应商锁定**。
+`pp switch` 希望被个人开发者、企业平台工程师和 Agent 应用团队广泛采用：**能本地部署、可信使用、容易贡献、无供应商锁定**。
 
 ## 2. 开源许可证（提案）
 
@@ -15,12 +15,12 @@
 
 ## 3. 品牌
 
-- 品牌展示：`pp swich`（小写空格）
-- GitHub / 包与命令：`pp-swich` / `ppswich`
+- 品牌展示：`pp switch`（小写空格）
+- GitHub / 包与命令：`pp-switch` / `ppswitch`
 - 推荐副标题：`Secure API & Secret Switching for Humans and Agents`
-- README banner：`assets/pp-swich-github-cover.png`
+- README banner：`assets/pp-switch-github-cover.png`
 
-仓库、PyPI、npm、GitHub 组织名、域名和商标是否可用，需要在正式发布前分别核对。不要假定 `pp swich` 当前具备排他商标权。
+仓库、PyPI、npm、GitHub 组织名、域名和商标是否可用，需要在正式发布前分别核对。不要假定 `pp switch` 当前具备排他商标权。
 
 ## 4. 公开透明原则
 

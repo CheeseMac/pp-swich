@@ -24,7 +24,7 @@ export function Login({ onLogin }: { onLogin: () => void }) {
   return (
     <div className="login-wrap">
       <div className="card login-card">
-        <h2 style={{ fontSize: 20 }}>pp swich console</h2>
+        <h2 style={{ fontSize: 20 }}>pp switch console</h2>
         <p className="muted" style={{ fontSize: 12 }}>
           Demo login: pick a synthetic dev principal. Tokens come from
           <code> data/dev-tokens.json</code> written by <code>scripts/seed-demo.py</code>.

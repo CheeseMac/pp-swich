@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import json
 
-from ppswich_discovery import (
+from ppswitch_discovery import (
     CANARY_API_KEY,
     fingerprint_operation,
     infer_json_schema,
     normalize_path,
     sanitize_observation,
 )
-from ppswich_discovery.parsers.har import build_candidates_from_har
-from ppswich_discovery.parsers.openapi import build_candidates_from_openapi
+from ppswitch_discovery.parsers.har import build_candidates_from_har
+from ppswitch_discovery.parsers.openapi import build_candidates_from_openapi
 
 
 def make_har(entries: list[dict]) -> dict:

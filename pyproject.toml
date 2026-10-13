@@ -1,7 +1,7 @@
 [project]
-name = "pp-swich-workspace"
+name = "pp-switch-workspace"
 version = "0.1.0"
-description = "pp swich monorepo workspace root (tooling only)"
+description = "pp switch monorepo workspace root (tooling only)"
 requires-python = ">=3.12"
 dependencies = []
 
@@ -28,16 +28,16 @@ members = [
 ]
 
 [tool.uv.sources]
-ppswich-core = { workspace = true }
-ppswich-db = { workspace = true }
-ppswich-discovery = { workspace = true }
-ppswich-policy = { workspace = true }
-ppswich-secrets = { workspace = true }
-ppswich = { workspace = true }
-ppswich-control = { workspace = true }
-ppswich-executor = { workspace = true }
-ppswich-mcp = { workspace = true }
-ppswich-mockcrm = { workspace = true }
+ppswitch-core = { workspace = true }
+ppswitch-db = { workspace = true }
+ppswitch-discovery = { workspace = true }
+ppswitch-policy = { workspace = true }
+ppswitch-secrets = { workspace = true }
+ppswitch = { workspace = true }
+ppswitch-control = { workspace = true }
+ppswitch-executor = { workspace = true }
+ppswitch-mcp = { workspace = true }
+ppswitch-mockcrm = { workspace = true }
 
 [tool.ruff]
 line-length = 100

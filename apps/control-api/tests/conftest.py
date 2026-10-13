@@ -14,15 +14,15 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from ppswich_control.app import create_app
-from ppswich_control.auth import hash_token
-from ppswich_control.settings import ControlSettings
-from ppswich_db.migrate import run_upgrade
-from ppswich_db.models import PrincipalRow, WorkspaceRow
-from ppswich_db.session import create_engine_for_url, create_session_factory
-from ppswich_executor.main import ExecutorSettings
-from ppswich_executor.main import create_app as create_executor_app
-from ppswich_secrets import MockSecretProvider
+from ppswitch_control.app import create_app
+from ppswitch_control.auth import hash_token
+from ppswitch_control.settings import ControlSettings
+from ppswitch_db.migrate import run_upgrade
+from ppswitch_db.models import PrincipalRow, WorkspaceRow
+from ppswitch_db.session import create_engine_for_url, create_session_factory
+from ppswitch_executor.main import ExecutorSettings
+from ppswitch_executor.main import create_app as create_executor_app
+from ppswitch_secrets import MockSecretProvider
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HAR_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "synthetic-har" / "crm.har.json"

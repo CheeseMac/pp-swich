@@ -15,4 +15,4 @@ COPY apps ./apps
 RUN uv sync --frozen --no-dev --all-packages
 
 # services bind 127.0.0.1 inside the container network; compose maps ports
-CMD ["uv", "run", "ppswich-control-api"]
+CMD ["uv", "run", "ppswitch-control-api"]

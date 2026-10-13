@@ -1,7 +1,7 @@
 import pytest
-from ppswich_core.enums import CapabilityStatus
-from ppswich_core.errors import ApiError, ErrorCode
-from ppswich_core.state_machine import transition_capability
+from ppswitch_core.enums import CapabilityStatus
+from ppswitch_core.errors import ApiError, ErrorCode
+from ppswitch_core.state_machine import transition_capability
 
 
 @pytest.mark.parametrize(

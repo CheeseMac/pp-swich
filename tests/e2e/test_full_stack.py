@@ -33,15 +33,15 @@ def auth(token: str) -> dict:
 
 @pytest.fixture(scope="module")
 def stack(tmp_path_factory, start_server_fixture):
-    from ppswich_control.app import create_app
-    from ppswich_control.auth import hash_token
-    from ppswich_control.settings import ControlSettings
-    from ppswich_db.migrate import run_upgrade
-    from ppswich_db.models import PrincipalRow, WorkspaceRow
-    from ppswich_db.session import create_engine_for_url, create_session_factory
-    from ppswich_executor.main import ExecutorSettings
-    from ppswich_executor.main import create_app as create_executor_app
-    from ppswich_mockcrm import app as mockcrm_app
+    from ppswitch_control.app import create_app
+    from ppswitch_control.auth import hash_token
+    from ppswitch_control.settings import ControlSettings
+    from ppswitch_db.migrate import run_upgrade
+    from ppswitch_db.models import PrincipalRow, WorkspaceRow
+    from ppswitch_db.session import create_engine_for_url, create_session_factory
+    from ppswitch_executor.main import ExecutorSettings
+    from ppswitch_executor.main import create_app as create_executor_app
+    from ppswitch_mockcrm import app as mockcrm_app
 
     db_dir = tmp_path_factory.mktemp("e2e")
     db_url = f"sqlite:///{db_dir / 'e2e.db'}"
@@ -92,7 +92,7 @@ def stack(tmp_path_factory, start_server_fixture):
 def demo(stack) -> dict:
     control_url = stack["control"].url
     ids: dict = {}
-    with httpx.Client(base_url=control_url, timeout=15.0) as client:
+    with httpx.Client(base_url=control_url, timeout=15.0, trust_env=False) as client:
         created = client.post("/api/v1/services", json={"slug": "crm", "name": "CRM"},
                               headers=auth(ALICE_TOKEN))
         assert created.status_code == 201, created.text
@@ -191,7 +191,7 @@ def demo(stack) -> dict:
 
 
 def binding_version(stack) -> int:
-    with httpx.Client(base_url=stack["control"].url) as client:
+    with httpx.Client(base_url=stack["control"].url, timeout=30.0, trust_env=False) as client:
         rows = client.get("/api/v1/active-bindings", headers=auth(ALICE_TOKEN)).json()["data"]
     for row in rows:
         if row["context_key"] == "personal":
@@ -200,7 +200,7 @@ def binding_version(stack) -> int:
 
 
 def switch_profile(stack, service_id: str, profile_id: str) -> httpx.Response:
-    with httpx.Client(base_url=stack["control"].url) as client:
+    with httpx.Client(base_url=stack["control"].url, timeout=30.0, trust_env=False) as client:
         return client.put(
             f"/api/v1/active-bindings/{service_id}/personal",
             json={"profile_id": profile_id, "expected_version": binding_version(stack)},
@@ -209,7 +209,7 @@ def switch_profile(stack, service_id: str, profile_id: str) -> httpx.Response:
 
 
 def invoke(stack, arguments: dict, token: str = ALICE_TOKEN, **extra) -> httpx.Response:
-    with httpx.Client(base_url=stack["control"].url, timeout=30.0) as client:
+    with httpx.Client(base_url=stack["control"].url, timeout=30.0, trust_env=False) as client:
         return client.post(
             "/api/v1/invocations",
             json={"capability": "crm.get_customer", "arguments": arguments, **extra},
@@ -266,9 +266,9 @@ class TestDemoFlow:
         assert after.json()["data"]["profile_label"] == "CRM Demo B"
 
     def test_sdk_invokes_through_real_servers(self, stack, demo) -> None:
-        from ppswich import PPSwichClient
+        from ppswitch import PPSwitchClient
 
-        client = PPSwichClient.from_http(stack["control"].url, ALICE_TOKEN)
+        client = PPSwitchClient.from_http(stack["control"].url, ALICE_TOKEN, trust_env=False)
         result = client.invoke("crm.get_customer", {"customer_id": "C-2048"})
         assert result.status == "succeeded"
         assert result.result["display_name"] == "Globex Corporation (QA copy)"
@@ -278,9 +278,11 @@ class TestDemoFlow:
         assert bindings[0]["display_label"] == "crm / CRM Demo B"
 
     def test_mcp_tools_list_and_call(self, stack, demo) -> None:
-        from ppswich_mcp.server import build_mcp_server
+        from ppswitch import PPSwitchClient
+        from ppswitch_mcp.server import build_mcp_server
 
-        server = build_mcp_server(stack["control"].url, ALICE_TOKEN)
+        client = PPSwitchClient.from_http(stack["control"].url, ALICE_TOKEN, trust_env=False)
+        server = build_mcp_server(stack["control"].url, ALICE_TOKEN, client=client)
 
         async def scenario() -> tuple[list, dict]:
             tools = await server.list_tools()
@@ -301,7 +303,7 @@ class TestDemoFlow:
         assert "access_token" not in blob
 
     def test_audit_trail_recorded(self, stack, demo) -> None:
-        with httpx.Client(base_url=stack["control"].url) as client:
+        with httpx.Client(base_url=stack["control"].url, timeout=30.0, trust_env=False) as client:
             events = client.get("/api/v1/audit-events", headers=auth(ALICE_TOKEN))
         assert events.status_code == 200
         actions = [e["action"] for e in events.json()["data"]]

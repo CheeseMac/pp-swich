@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Seed the pp swich demo workspace (idempotent).
+"""Seed the pp switch demo workspace (idempotent).
 
 Creates directly in the database (trusted operator tool):
 - a ``demo`` workspace with dev principals (alice / carol / agent-helper),
@@ -45,9 +45,9 @@ def die(message: str) -> None:
 
 def seed_principals() -> str:
     """Create workspace + principals directly; returns alice's dev token."""
-    from ppswich_control.auth import hash_token
-    from ppswich_db.models import PrincipalRow, WorkspaceRow, utcnow
-    from ppswich_db.session import create_engine_for_url, create_session_factory
+    from ppswitch_control.auth import hash_token
+    from ppswitch_db.models import PrincipalRow, WorkspaceRow, utcnow
+    from ppswitch_db.session import create_engine_for_url, create_session_factory
 
     db_url = _control_db_url()
     tokens_path = REPO_ROOT / "data" / "dev-tokens.json"
@@ -109,7 +109,7 @@ def seed_principals() -> str:
 def _control_db_url() -> str:
     import os
 
-    return os.environ.get("PP_SWICH_DB_URL", "sqlite:///./data/pp-swich.db")
+    return os.environ.get("PP_SWITCH_DB_URL", "sqlite:///./data/pp-switch.db")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> None:
 
     alice_token = seed_principals()
     headers = {"Authorization": f"Bearer {alice_token}"}
-    client = httpx.Client(base_url=args.control_url, timeout=30.0)
+    client = httpx.Client(base_url=args.control_url, timeout=30.0, trust_env=False)
 
     if client.get("/healthz").status_code != 200:
         die(f"control-api not reachable at {args.control_url} (run scripts/dev-up.py first)")

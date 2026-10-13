@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Secret scanner for the pp swich repository (CI security gate).
+"""Secret scanner for the pp switch repository (CI security gate).
 
 Checks:
 1. no secret-bearing files are committed (.env, *.key, *.pem, ...);
 2. no real-looking credential assignments appear in tracked text files;
-3. .env.example only contains non-secret PP_SWICH_* configuration.
+3. .env.example only contains non-secret PP_SWITCH_* configuration.
 
 Known synthetic values (MOCKKEY-*, dev-token-*, CANARY_*, the dev internal
 token, <REDACTED...> markers) are allow-listed: they exist precisely so
@@ -118,8 +118,8 @@ def check_env_example(root: Path) -> list[str]:
         if not line or line.startswith("#"):
             continue
         key = line.split("=", 1)[0].strip()
-        if not key.startswith("PP_SWICH_"):
-            findings.append(f".env.example: non-PP_SWICH key {key!r}")
+        if not key.startswith("PP_SWITCH_"):
+            findings.append(f".env.example: non-PP_SWITCH key {key!r}")
         value = line.split("=", 1)[1] if "=" in line else ""
         if len(value) > 64:
             findings.append(f".env.example: suspicious long value for {key}")

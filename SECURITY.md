@@ -1,6 +1,6 @@
 # Security Policy (Pre-alpha)
 
-`pp swich` is currently a **design / pre-alpha** project. No production security guarantees are claimed until implementations, tests and audits are available.
+`pp switch` is currently a **design / pre-alpha** project. No production security guarantees are claimed until implementations, tests and audits are available.
 
 ## Reporting vulnerabilities
 

@@ -5,7 +5,7 @@
 为了让 Python、Web UI、浏览器扩展、CLI、测试和协议适配一起迭代，第一版采用 Monorepo。以下为**待创建的目录结构**，不是当前文档包已存在的源码。
 
 ```text
-pp-swich/
+pp-switch/
 ├── README.md
 ├── LICENSE                         # 开源前确认 Apache-2.0 并真正加入正文
 ├── SECURITY.md
@@ -17,7 +17,7 @@ pp-swich/
 ├── package.json
 ├── pnpm-lock.yaml
 ├── .env.example                    # 只有非秘密配置
-├── pp-swich.example.yaml           # commit-safe 能力别名配置
+├── pp-switch.example.yaml           # commit-safe 能力别名配置
 ├── .gitignore
 ├── .github/
 │   ├── workflows/
@@ -30,7 +30,7 @@ pp-swich/
 ├── apps/
 │   ├── control-api/
 │   │   ├── pyproject.toml
-│   │   ├── src/ppswich_control/
+│   │   ├── src/ppswitch_control/
 │   │   │   ├── main.py
 │   │   │   ├── api/v1/
 │   │   │   │   ├── services.py
@@ -53,7 +53,7 @@ pp-swich/
 │   │   └── tests/
 │   ├── executor/
 │   │   ├── pyproject.toml
-│   │   ├── src/ppswich_executor/
+│   │   ├── src/ppswitch_executor/
 │   │   │   ├── main.py
 │   │   │   ├── task_verify.py
 │   │   │   ├── dispatch.py
@@ -67,14 +67,14 @@ pp-swich/
 │   │   └── tests/
 │   ├── mcp-adapter/
 │   │   ├── pyproject.toml
-│   │   ├── src/ppswich_mcp/
+│   │   ├── src/ppswitch_mcp/
 │   │   │   ├── server.py
 │   │   │   ├── tool_registry.py
 │   │   │   └── transport.py
 │   │   └── tests/
 │   ├── discovery-worker/
 │   │   ├── pyproject.toml
-│   │   ├── src/ppswich_discovery/
+│   │   ├── src/ppswitch_discovery/
 │   │   │   ├── parsers/har.py
 │   │   │   ├── parsers/openapi.py
 │   │   │   ├── parsers/postman.py
@@ -115,7 +115,7 @@ pp-swich/
 │   ├── core/                       # domain models, typed errors, security enums
 │   ├── discovery-sdk/              # reusable HAR/OpenAPI normalization
 │   ├── capability-sdk/             # typed schema + protocol-independent invocation
-│   ├── python-sdk/                 # `import ppswich` public client
+│   ├── python-sdk/                 # `import ppswitch` public client
 │   ├── policy-engine/              # RBAC, scoped ABAC and delegation checks
 │   ├── secret-provider/            # SecretProvider abstract API
 │   │   ├── mock/
@@ -164,7 +164,7 @@ pp-swich/
 │   └── 18-SECRETLESS-DEVELOPMENT.md
 │
 └── assets/
-    └── pp-swich-github-cover.png
+    └── pp-switch-github-cover.png
 ```
 
 ## 2. 依赖规则（防循环依赖）
@@ -272,7 +272,7 @@ pnpm -r build
 ## 7. 开发环境的安全要求
 
 - 生产密钥在 IDE / AI 代码代理无法读取的信任边界之外；
-- `.env.example` 只能包含 `PP_SWICH_*` 非秘密配置；
+- `.env.example` 只能包含 `PP_SWITCH_*` 非秘密配置；
 - 本地开发用 mock 连接和 synthetic fixture；
 - 真实密钥的初始化必须通过安全 UI 或独立受信渠道进行；
 - AI Agent 不应该参与运行生产密钥录入过程；

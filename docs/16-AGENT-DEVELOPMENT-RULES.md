@@ -1,6 +1,6 @@
 # 16 · 给 AI Coding Agent / 贡献者的开发规则
 
-> 此文件面向使用 AI 编码工具开发 `pp swich` 的贡献者。根目录的 `AGENTS.md` 应引用本文件。  
+> 此文件面向使用 AI 编码工具开发 `pp switch` 的贡献者。根目录的 `AGENTS.md` 应引用本文件。  
 > **这些规则不能替代操作系统、容器、网络和 SecretProvider 的技术隔离。**
 
 ## 1. 开发 Agent 允许做的事
@@ -25,9 +25,9 @@
 
 允许：
 ```dotenv
-PP_SWICH_WORKSPACE=demo
-PP_SWICH_PROFILE=crm-demo
-PP_SWICH_MODEL_ALIAS=llm.fast
+PP_SWITCH_WORKSPACE=demo
+PP_SWITCH_PROFILE=crm-demo
+PP_SWITCH_MODEL_ALIAS=llm.fast
 ```
 
 不允许：
@@ -37,7 +37,7 @@ OPENBAO_SECRET_ID=real-value
 CRM_SESSION_COOKIE=real-value
 ```
 
-`PP_SWICH_PROFILE` 只是别名，不应通过它直接获得调用权限。调用必须通过可信 OS/服务身份和策略引擎。
+`PP_SWITCH_PROFILE` 只是别名，不应通过它直接获得调用权限。调用必须通过可信 OS/服务身份和策略引擎。
 
 ## 4. 为功能编程时的推荐步骤
 

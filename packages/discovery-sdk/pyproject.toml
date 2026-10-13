@@ -1,10 +1,10 @@
 [project]
-name = "ppswich-discovery"
+name = "ppswitch-discovery"
 version = "0.1.0"
-description = "pp swich discovery SDK: sanitized HAR/OpenAPI import, normalization, schema inference"
+description = "pp switch discovery SDK: sanitized HAR/OpenAPI import, normalization, schema inference"
 requires-python = ">=3.12"
 dependencies = [
-    "ppswich-core",
+    "ppswitch-core",
     "pydantic>=2.9",
 ]
 
@@ -13,4 +13,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/ppswich_discovery"]
+packages = ["src/ppswitch_discovery"]

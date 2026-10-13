@@ -1,4 +1,4 @@
-# AI Coding Agent Instructions for pp swich
+# AI Coding Agent Instructions for pp switch
 
 The source of truth for architecture and implementation is [`docs/00-START-HERE.md`](docs/00-START-HERE.md).
 Mandatory security controls are [`docs/05-SECURITY.md`](docs/05-SECURITY.md),

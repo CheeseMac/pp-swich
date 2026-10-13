@@ -1,8 +1,8 @@
-# pp swich compose deployment (docs/10-DEPLOYMENT.md)
+# pp switch compose deployment (docs/10-DEPLOYMENT.md)
 #
 # Profile: small-team server deployment. The control plane and executor run
 # as separate containers (secrets stay with the executor), PostgreSQL is the
-# production database baseline. Set PP_SWICH_INTERNAL_TOKEN to a strong
+# production database baseline. Set PP_SWITCH_INTERNAL_TOKEN to a strong
 # value provided by your deployment platform - never commit it.
 
 version: "3.9"
@@ -11,13 +11,13 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ppswich
+      POSTGRES_USER: ppswitch
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
-      POSTGRES_DB: ppswich
+      POSTGRES_DB: ppswitch
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ppswich"]
+      test: ["CMD-SHELL", "pg_isready -U ppswitch"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -26,10 +26,10 @@ services:
     build:
       context: ../..
       dockerfile: deployments/compose/Dockerfile.python
-    command: ppswich-executor
+    command: ppswitch-executor
     environment:
-      PP_SWICH_INTERNAL_TOKEN: ${PP_SWICH_INTERNAL_TOKEN:?set PP_SWICH_INTERNAL_TOKEN}
-      PP_SWICH_DEMO_MODE: "false"
+      PP_SWITCH_INTERNAL_TOKEN: ${PP_SWITCH_INTERNAL_TOKEN:?set PP_SWITCH_INTERNAL_TOKEN}
+      PP_SWITCH_DEMO_MODE: "false"
     ports:
       - "127.0.0.1:8912:8912"
 
@@ -37,13 +37,13 @@ services:
     build:
       context: ../..
       dockerfile: deployments/compose/Dockerfile.python
-    command: ppswich-control-api
+    command: ppswitch-control-api
     environment:
-      PP_SWICH_DB_URL: postgresql+psycopg://ppswich:${POSTGRES_PASSWORD}@db:5432/ppswich
-      PP_SWICH_EXECUTOR_URL: http://executor:8912
-      PP_SWICH_INTERNAL_TOKEN: ${PP_SWICH_INTERNAL_TOKEN}
-      PP_SWICH_DEMO_MODE: "false"
-      PP_SWICH_AUTO_MIGRATE: "true"
+      PP_SWITCH_DB_URL: postgresql+psycopg://ppswitch:${POSTGRES_PASSWORD}@db:5432/ppswitch
+      PP_SWITCH_EXECUTOR_URL: http://executor:8912
+      PP_SWITCH_INTERNAL_TOKEN: ${PP_SWITCH_INTERNAL_TOKEN}
+      PP_SWITCH_DEMO_MODE: "false"
+      PP_SWITCH_AUTO_MIGRATE: "true"
     ports:
       - "127.0.0.1:8911:8911"
     depends_on:

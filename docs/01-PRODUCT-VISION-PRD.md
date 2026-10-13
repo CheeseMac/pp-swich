@@ -6,7 +6,7 @@
 
 核心标语：**Discover APIs · Switch Profiles · Protect Secrets · Empower Agents**。
 
-`pp swich` 是**API 目录 + 连接管理器 + 安全能力路由器**，不是密码展示器、爬虫平台，也不是替代每个现有系统的身份授权机构。
+`pp switch` 是**API 目录 + 连接管理器 + 安全能力路由器**，不是密码展示器、爬虫平台，也不是替代每个现有系统的身份授权机构。
 
 ## 2. 需要解决的痛点
 
@@ -54,11 +54,11 @@
 
 ### UJ-05：AI 编码助手参与开发，但不接触 `.env` 真实凭证（首期安全主线）
 
-开发者将 `CRM_TOKEN` / `MODEL_API_KEY` 迁出仓库，使用 `ppswich` SDK 的 `invoke(capability, arguments)`；项目 `.env.example` 仅存工作区、能力和 Profile 别名。应用通过受信 Broker 的**独立身份**获取经授权的执行结果，服务端密钥从不返回给开发 Agent。若编码 Agent 与生产 Broker 同 OS 身份/网络权限，系统必须提示风险并要求隔离。
+开发者将 `CRM_TOKEN` / `MODEL_API_KEY` 迁出仓库，使用 `ppswitch` SDK 的 `invoke(capability, arguments)`；项目 `.env.example` 仅存工作区、能力和 Profile 别名。应用通过受信 Broker 的**独立身份**获取经授权的执行结果，服务端密钥从不返回给开发 Agent。若编码 Agent 与生产 Broker 同 OS 身份/网络权限，系统必须提示风险并要求隔离。
 
 ### UJ-06：新系统自描述接入（第二阶段）
 
-开发者发布 OpenAPI 3.1 文档和可选 `x-pp-swich` 语义元数据 → 自动导入草稿 → 工具审核 → 发布到个人/团队/组织目录。
+开发者发布 OpenAPI 3.1 文档和可选 `x-pp-switch` 语义元数据 → 自动导入草稿 → 工具审核 → 发布到个人/团队/组织目录。
 
 ## 5. 优先级划分
 

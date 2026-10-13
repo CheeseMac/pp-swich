@@ -51,12 +51,12 @@ def test_scanner_allows_synthetic_values(tmp_path: Path) -> None:
         'INTERNAL = "dev-internal-token-synthetic"\n',
         encoding="utf-8",
     )
-    (tmp_path / ".env.example").write_text("PP_SWICH_MODE=local\nPP_SWICH_WORKSPACE=demo\n")
+    (tmp_path / ".env.example").write_text("PP_SWITCH_MODE=local\nPP_SWITCH_WORKSPACE=demo\n")
     result = run_scanner(tmp_path)
     assert result.returncode == 0, result.stdout
 
 
-def test_scanner_rejects_non_ppswich_env_example(tmp_path: Path) -> None:
+def test_scanner_rejects_non_ppswitch_env_example(tmp_path: Path) -> None:
     (tmp_path / ".env.example").write_text("AWS_SECRET_ACCESS_KEY=abcdefghijklmnopqrst\n")
     result = run_scanner(tmp_path)
     assert result.returncode == 1

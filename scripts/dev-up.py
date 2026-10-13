@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Start the full local pp swich demo stack.
+"""Start the full local pp switch demo stack.
 
 Launches (all bound to 127.0.0.1):
 - mock CRM            :8913
@@ -50,16 +50,16 @@ def main(argv: list[str] | None = None) -> None:
     import os
 
     if not args.no_migrate:
-        os.environ.setdefault("PP_SWICH_AUTO_MIGRATE", "true")
+        os.environ.setdefault("PP_SWITCH_AUTO_MIGRATE", "true")
     # the local demo stack runs with mock credentials and the dev login
     # directory; production deployments must never set this flag
-    os.environ.setdefault("PP_SWICH_DEMO_MODE", "true")
+    os.environ.setdefault("PP_SWITCH_DEMO_MODE", "true")
 
-    from ppswich_control.app import create_app
-    from ppswich_control.settings import ControlSettings
-    from ppswich_executor.main import ExecutorSettings
-    from ppswich_executor.main import create_app as create_executor_app
-    from ppswich_mockcrm import app as mockcrm_app
+    from ppswitch_control.app import create_app
+    from ppswitch_control.settings import ControlSettings
+    from ppswitch_executor.main import ExecutorSettings
+    from ppswitch_executor.main import create_app as create_executor_app
+    from ppswitch_mockcrm import app as mockcrm_app
 
     servers = {
         "mock CRM": start(mockcrm_app, "mockcrm", PORTS["mockcrm"]),
@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> None:
             print(f"warning: {name} did not report started", file=sys.stderr)
 
     print()
-    print("pp swich demo stack is up:")
+    print("pp switch demo stack is up:")
     print(f"  control-api : http://127.0.0.1:{PORTS['control']}   (docs at /docs)")
     print(f"  executor    : http://127.0.0.1:{PORTS['executor']}")
     print(f"  mock CRM    : http://127.0.0.1:{PORTS['mockcrm']}")

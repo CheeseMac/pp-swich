@@ -1,8 +1,8 @@
 # 18 · 不把密钥交给 AI 编码助手：无 `.env` 凭证开发模式
 
-> **新增 P0 产品能力**：这是 pp swich 与普通 API 目录/MCP 网关的关键差异。
+> **新增 P0 产品能力**：这是 pp switch 与普通 API 目录/MCP 网关的关键差异。
 >
-> 目标：项目代码和 `.env.example` 只写**能力别名、档案名称与非秘密配置**；实际带凭证的 HTTP 请求通过 pp swich 可信服务发往目标。Agent 能参与开发、测试，但不能读到供应商 API Key / 数据库密码 / OAuth Token。
+> 目标：项目代码和 `.env.example` 只写**能力别名、档案名称与非秘密配置**；实际带凭证的 HTTP 请求通过 pp switch 可信服务发往目标。Agent 能参与开发、测试，但不能读到供应商 API Key / 数据库密码 / OAuth Token。
 
 ## 1. 为什么只是把密钥搬出 `.env` 还不够？
 
@@ -17,7 +17,7 @@ DATABASE_URL=postgresql://admin:real-password@db.example/production
 
 把它们改成：
 ```dotenv
-CRM_TOKEN=pp-swich://secret/crm-prod
+CRM_TOKEN=pp-switch://secret/crm-prod
 ```
 **仍不够**：如果 SDK 能解析出真正的 `CRM_TOKEN` 并将其返回到应用进程，而 AI Agent 有权读取应用进程/执行任意代码，仍可能取得原始 Token。
 
@@ -33,11 +33,11 @@ CRM_TOKEN=pp-swich://secret/crm-prod
 ### 2.1 项目 `.env.example` 中只有非秘密配置
 
 ```dotenv
-PP_SWICH_MODE=local
-PP_SWICH_BROKER_SOCKET=/run/user/1000/pp-swich/consumer.sock
-PP_SWICH_WORKSPACE=personal
-PP_SWICH_PROFILE=crm-dev
-PP_SWICH_MODEL_ALIAS=llm.fast
+PP_SWITCH_MODE=local
+PP_SWITCH_BROKER_SOCKET=/run/user/1000/pp-switch/consumer.sock
+PP_SWITCH_WORKSPACE=personal
+PP_SWITCH_PROFILE=crm-dev
+PP_SWITCH_MODEL_ALIAS=llm.fast
 ```
 
 路径仅为示例；跨平台实际通过 SDK 选择 Unix socket / Windows Named Pipe / HTTPS（工作负载身份）。这些字段是**标识，不是授权凭据**。使用该配置运行的应用必须被可信系统认证且拥有独立授权。
@@ -45,9 +45,9 @@ PP_SWICH_MODEL_ALIAS=llm.fast
 ### 2.2 Python SDK 目标用法（拟开发 API）
 
 ```python
-from ppswich import PPSwichClient
+from ppswitch import PPSwitchClient
 
-pp = PPSwichClient.from_local_broker()
+pp = PPSwitchClient.from_local_broker()
 
 # SDK 只传能力名称和业务参数；没有 get_secret 方法
 customer = pp.invoke(
@@ -61,7 +61,7 @@ print(customer["display_name"])
 ```text
 Application
   └─ pp.invoke("crm.get_customer", args)
-       └─ authenticated pp swich Broker
+       └─ authenticated pp switch Broker
             ├─ verify caller identity, user/agent grants
             ├─ resolve selected profile and immutable snapshot
             ├─ enforce target/resource policy and budget
@@ -90,10 +90,10 @@ reply = pp.invoke(
 
 但是：
 - `base_url` 不是凭据；仍须通过经过认证的本地 IPC、受限代理身份或短期 Scoped Credential 来鉴权。
-- 如果 SDK 必须设置 `api_key`，**不要将原始供应商 Key 填进去**；可只在受信应用中使用短期、仅限模型/预算的 pp swich 代理 Token。
+- 如果 SDK 必须设置 `api_key`，**不要将原始供应商 Key 填进去**；可只在受信应用中使用短期、仅限模型/预算的 pp switch 代理 Token。
 - 代理 Token **同样是可滥用的 Bearer 凭据**。它不暴露供应商主密钥，但如果 AI 能读它，仍可能产生调用费用/数据访问。严格安全模式下禁止 AI Agent 获取该 Token，使用隔离执行进程和工作负载身份。
 
-可以参考 [LiteLLM Proxy](https://docs.litellm.ai/docs/simple_proxy) 的“虚拟 Key / 模型别名”理念，但 pp swich 的默认模型应优先采用**不向调用进程返回后端密钥**的能力代理。
+可以参考 [LiteLLM Proxy](https://docs.litellm.ai/docs/simple_proxy) 的“虚拟 Key / 模型别名”理念，但 pp switch 的默认模型应优先采用**不向调用进程返回后端密钥**的能力代理。
 
 ## 3. 一键切换如何影响项目代码
 
@@ -122,22 +122,22 @@ pp.invoke("crm.get_customer", {"customer_id": "C-1024"})
 
 **本地同 OS 身份限制很关键**。Unix socket `chmod 0600` 只能隔离其他 UID；如果 Agent 能以同一 UID 执行任意代码，它通常也能调用该 socket。要强隔离就需要不同 OS 用户、容器/VM、权限边界或远程服务批准。
 
-## 5. `pp-swich` CLI 预期功能
+## 5. `pp-switch` CLI 预期功能
 
 拟设计而非已实现：
 ```bash
-ppswich init
-ppswich doctor
-ppswich service list
-ppswich profile list --service crm
-ppswich profile use crm/staging-qa --context personal
-ppswich capability list
-ppswich capability test crm.get_customer --fixture demo.json
-ppswich migrate env --scan-only
+ppswitch init
+ppswitch doctor
+ppswitch service list
+ppswitch profile list --service crm
+ppswitch profile use crm/staging-qa --context personal
+ppswitch capability list
+ppswitch capability test crm.get_customer --fixture demo.json
+ppswitch migrate env --scan-only
 ```
 
 管理员可以通过**受信 GUI / OS 凭证输入渠道**存入凭证：
-`ppswich connection add` 仅引导打开安全输入界面，默认不允许 `--password ...` 或在 AI 可记录的终端提示明文。不打印凭证、不使用终端命令参数传 Key（shell history/process list 风险）。
+`ppswitch connection add` 仅引导打开安全输入界面，默认不允许 `--password ...` 或在 AI 可记录的终端提示明文。不打印凭证、不使用终端命令参数传 Key（shell history/process list 风险）。
 
 迁移命令 `migrate env --scan-only` 仅报告 key 名称和位置，**永不打印 value**；真正迁移必须由可信用户在隔离环境完成。
 
@@ -151,7 +151,7 @@ ppswich migrate env --scan-only
 5. 为 Agent 设置文件忽略规则和 sandbox；注意 `.gitignore` 不会禁止读取文件。
 
 ### 阶段 1：建 Capability / Profile
-1. 在 pp swich 注册 `Service`、允许的 `Endpoint` 和 Operation。
+1. 在 pp switch 注册 `Service`、允许的 `Endpoint` 和 Operation。
 2. 为每种调用创建 `Capability` 和输入/输出白名单。
 3. 通过可信本地 GUI / 企业 Vault 建立真实 Connection。
 4. 为 dev/staging/prod 创建独立 Profile；为 production 默认启用审批。
@@ -170,8 +170,8 @@ response = httpx.get(
 
 **迁移后：**
 ```python
-from ppswich import PPSwichClient
-pp = PPSwichClient.from_local_broker()
+from ppswitch import PPSwitchClient
+pp = PPSwitchClient.from_local_broker()
 response = pp.invoke(
     "crm.get_customer",
     {"customer_id": "C-1024"},
@@ -181,9 +181,9 @@ response = pp.invoke(
 旧代码若需要流式响应、文件上传、WebSocket，应扩展**明确受限且版本化**的能力适配器，不能退回为“任意目标通用 HTTP + 动态 Header”。
 
 ### 阶段 3：验证
-- 代码中不再引用真实 `*_KEY`, `*_TOKEN`，仅有 `PP_SWICH_*` 非秘密变量。
+- 代码中不再引用真实 `*_KEY`, `*_TOKEN`，仅有 `PP_SWITCH_*` 非秘密变量。
 - AI 开发沙箱不能读真实 Broker socket、Keyring 和 `.env` 历史备份。
-- `ppswich doctor` 检查当前运行环境是否存在意外密钥环境变量（只报告**名称**，不回显值）。
+- `ppswitch doctor` 检查当前运行环境是否存在意外密钥环境变量（只报告**名称**，不回显值）。
 - 用合成蜜罐 Key 执行调用，确保日志、异常、追踪、MCP 工具结果和**发往模型的请求**不含 Key。
 - 模拟 AI 修改调用参数，检查权限、限流和资源作用域始终在服务端执行。
 - 关闭旧 Key 和废弃的长期秘钥分发通道。
@@ -193,7 +193,7 @@ response = pp.invoke(
 ### 配置演示（不包含真实秘密）
 
 ```yaml
-# pp-swich.yaml (commit-safe)
+# pp-switch.yaml (commit-safe)
 project: my-crm-tool
 workspace: my-team
 bindings:
@@ -208,7 +208,7 @@ runtime:
   isolation: required
 ```
 
-`pp-swich.yaml` 可以在代码仓库里分享；Profile/Endpoint 的可见性仍受企业目录权限控制。
+`pp-switch.yaml` 可以在代码仓库里分享；Profile/Endpoint 的可见性仍受企业目录权限控制。
 
 ### 提示性 UI
 
@@ -259,7 +259,7 @@ deny:
 | SLD-006 | 同 UID AI Agent 环境未隔离时显示安全风险，不宣称无泄漏 |
 | SLD-007 | Dev Agent 身份不可调用 prod Connection |
 | SLD-008 | 模型请求/日志/执行结果无蜜罐值 |
-| SLD-009 | pp swich 可点击切换 dev Profile，进行中的请求绑定仍不变 |
+| SLD-009 | pp switch 可点击切换 dev Profile，进行中的请求绑定仍不变 |
 | SLD-010 | 旧凭证泄漏后可执行轮换、撤销并完成访问审计 |
 
 ## 11. 相关参考
