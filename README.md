@@ -114,6 +114,7 @@ uv run python scripts/seed-demo.py
 | 故障与操作手册 | [17-OPERATIONS-RUNBOOK](docs/17-OPERATIONS-RUNBOOK.md) |
 | **AI 编码助手与 `.env` 密钥隔离（核心）** | **[18-SECRETLESS-DEVELOPMENT](docs/18-SECRETLESS-DEVELOPMENT.md)** |
 | 首批可直接交给编码 Agent 的任务 | [19-FIRST-CODING-TASKS](docs/19-FIRST-CODING-TASKS.md) |
+| **v0.1.0 首竖切实现审核报告（送审）** | **[20-IMPLEMENTATION-REVIEW](docs/20-IMPLEMENTATION-REVIEW.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 
