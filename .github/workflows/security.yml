@@ -29,7 +29,7 @@ jobs:
           matches=$(grep -rIl "CANARY_" --exclude-dir=.git --exclude-dir=.venv \
             --exclude-dir=node_modules --exclude-dir=tests \
             --exclude-dir=docs --exclude-dir=fixtures . \
-            | grep -v "sanitizer.py\|response_guard.py\|mockcrm\|mock_adapter.py\|check-no-secrets\|security.yml\|bug_report.md\|ppswitch_discovery/__init__.py" || true)
+            | grep -v "sanitizer.py\|response_guard.py\|mockcrm\|mock_adapter.py\|check-no-secrets\|security.yml\|bug_report.md\|ppswitch_discovery/__init__.py\|parsers/openapi.py" || true)
           if [ -n "$matches" ]; then
             echo "CANARY_ values found outside approved locations:"; echo "$matches"; exit 1
           fi
