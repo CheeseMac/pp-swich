@@ -79,6 +79,14 @@ class PrincipalRow(Base):
         String(16), CheckConstraint("kind IN ('user','agent','service')", "kind"),
         default="user",
     )
+    # workspace role for human principals (review R-13): 'member' | 'reviewer'
+    # | 'admin'. NULL for agent/service principals. Legacy rows are NULL and
+    # are treated as 'member' by the permission matrix.
+    role: Mapped[str | None] = mapped_column(
+        String(16),
+        CheckConstraint("role IS NULL OR role IN ('member','reviewer','admin')", "role"),
+        default=None,
+    )
     display_name: Mapped[str] = mapped_column(String(128), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     token_hint: Mapped[str] = mapped_column(String(32), nullable=False, default="")
@@ -369,6 +377,36 @@ class AgentGrantRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class DelegationRow(Base):
+    """A user delegating their authority to an agent (review P0-2 / SEC-033).
+
+    An agent may only act for a user with an ACTIVE, unexpired delegation;
+    invocation-time profile binding resolution is keyed to the delegating
+    user, never to a shared agent scope. One row per (user, agent): the
+    status column toggles active/revoked.
+    """
+
+    __tablename__ = "delegations"
+    __table_args__ = (
+        CheckConstraint("status IN ('active','revoked')", "status"),
+        UniqueConstraint("workspace_id", "user_principal_id", "agent_principal_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    user_principal_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    agent_principal_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    # optional narrowing: delegation scopes intersect grant + connection scopes
+    scopes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(16), default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class InvocationRow(Base):

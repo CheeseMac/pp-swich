@@ -32,9 +32,12 @@ import httpx
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 PRINCIPAL_SPECS = [
-    ("user", "Alice (demo)", "alice"),
-    ("user", "Carol (demo)", "carol"),
-    ("agent", "agent-helper (demo)", "agent-helper"),
+    # (kind, display name, slug, workspace role) - review2 R-13: the demo
+    # reviewer/publisher (carol) holds the reviewer role; alice is the
+    # workspace admin (creates services, grants, delegations)
+    ("user", "Alice (demo)", "alice", "admin"),
+    ("user", "Carol (demo)", "carol", "reviewer"),
+    ("agent", "agent-helper (demo)", "agent-helper", None),
 ]
 
 
@@ -74,7 +77,7 @@ def seed_principals() -> str:
             session.flush()
         tokens: dict[str, str] = {}
         principal_ids: dict[str, uuid.UUID] = {}
-        for kind, name, slug in PRINCIPAL_SPECS:
+        for kind, name, slug, role in PRINCIPAL_SPECS:
             token = existing.get(slug) or f"dev-token-{slug}-{secrets.token_hex(4)}"
             tokens[slug] = token
             principal = (
@@ -94,6 +97,8 @@ def seed_principals() -> str:
                 )
                 session.add(principal)
                 session.flush()
+            if principal.role != role:
+                principal.role = role  # keep seeded roles in sync
             principal_ids[slug] = principal.id
         session.commit()
     engine.dispose()
@@ -123,6 +128,22 @@ def main(argv: list[str] | None = None) -> None:
 
     if client.get("/healthz").status_code != 200:
         die(f"control-api not reachable at {args.control_url} (run scripts/dev-up.py first)")
+
+    # ---- alice delegates to the demo agent (review2 P0-2) -------------------
+    principals = client.get("/api/v1/dev/principals").json()["data"]
+    agent_id = next(
+        (p["id"] for p in principals if p["display_name"].startswith("agent-helper")), None
+    )
+    if agent_id is not None:
+        delegations = client.get("/api/v1/delegations", headers=headers).json()["data"]
+        if not any(d["agent_principal_id"] == agent_id and d["active"] for d in delegations):
+            created = client.post(
+                "/api/v1/delegations",
+                json={"agent_principal_id": agent_id, "scopes": []},
+                headers=headers,
+            )
+            if created.status_code != 201:
+                die(f"create delegation failed: {created.text}")
 
     # ---- service + endpoint -------------------------------------------------
     services = client.get("/api/v1/services", headers=headers).json()["data"]
@@ -195,7 +216,7 @@ def main(argv: list[str] | None = None) -> None:
 
     print()
     print("Demo workspace seeded. Synthetic dev tokens (localhost demo only):")
-    for kind, name, _slug in PRINCIPAL_SPECS:
+    for kind, name, _slug, _role in PRINCIPAL_SPECS:
         print(f"  {name:<24} [{kind}]")
     print()
     print("Tokens:   data/dev-tokens.json (gitignored runtime file)")

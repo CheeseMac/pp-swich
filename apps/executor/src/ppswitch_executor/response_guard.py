@@ -1,16 +1,24 @@
 """Response guard: the last gate before anything returns to a caller.
 
-PR-SEC-04 (review): projection is driven by the capability's reviewed
-``output_schema`` recursively - only fields the schema declares survive, at
-every nesting level. Sensitive *names* (token, api_key, ...) are dropped at
-any depth even when the schema allows them, values are type-checked against
-the schema, and depth/size budgets are enforced. The regex redaction of
-secret-shaped strings remains only as the final supplementary layer.
+PR-SEC-04 (review) + review2 P0-4 (SEC-035): projection is driven by the
+capability's reviewed ``output_schema`` recursively, and the TYPE gate
+runs FIRST - a value whose actual JSON kind disagrees with the declared
+schema type is denied outright, never structurally walked. Only fields
+the schema declares survive, at every nesting level; sensitive *names*
+(token, api_key, ...) are dropped at any depth even when the schema
+allows them; depth/size budgets are enforced; the regex redaction of
+secret-shaped strings remains the final supplementary layer.
 
-If the schema has no ``properties`` at a level, that level falls back to
-the capability ``allow_fields`` (top level) or is scrubbed-only (nested) -
-legacy capabilities without detailed schemas never get MORE exposure than
-before.
+Default-deny rules when a reviewed schema is in charge (``output_schema``
+has ``properties``):
+
+- a nested object the schema does not describe via ``properties`` is
+  DENIED (empty object), not scrubbed-through;
+- the top-level allow set is the INTERSECTION of the reviewed schema
+  properties and ``allow_fields`` when both are present - exactly one
+  authoritative allow set, never the union;
+- legacy capabilities without any ``output_schema`` keep the old behavior
+  (top-level allow_fields + recursive scrub) and never gain exposure.
 """
 
 from __future__ import annotations
@@ -72,7 +80,7 @@ def _redact_string(value: str) -> str:
 def _type_ok(value: Any, expected: str) -> bool:
     python_type = _TYPE_MAP.get(expected)
     if python_type is None:
-        return True  # unknown/unsupported schema type: don't guess, scrub layer handles
+        return True  # unknown/unsupported schema type: don't guess, deny below
     if expected == "number" and isinstance(value, bool):
         return False
     return isinstance(value, python_type)
@@ -98,18 +106,37 @@ def _scrub(value: Any, dropped: _Dropped, depth: int = 0) -> Any:
 
 
 def _project(value: Any, schema: dict[str, Any], dropped: _Dropped, depth: int = 0) -> Any:
-    """Recursive schema-driven whitelist projection."""
+    """Recursive schema-driven whitelist projection (default-deny)."""
     if depth > MAX_DEPTH:
         raise ApiError(ErrorCode.UPSTREAM_FAILURE, "Upstream payload nesting too deep")
     if not isinstance(schema, dict):
         schema = {}
 
     expected = schema.get("type")
+
+    # --- type gate FIRST (SEC-035): the declared type decides before any
+    # structural walk, so an object smuggled into a string field is denied
+    # instead of falling into a lenient structural branch
+    if expected == "object" and not isinstance(value, dict):
+        dropped.add("<type:object>")
+        return None
+    if expected == "array" and not isinstance(value, list):
+        dropped.add("<type:array>")
+        return None
+    if isinstance(expected, str) and expected not in ("object", "array"):
+        if not _type_ok(value, expected):
+            dropped.add(f"<type:{expected}>")
+            return None
+
+    # --- structural projection
     if isinstance(value, dict):
         properties = schema.get("properties")
         if not isinstance(properties, dict) or not properties:
-            # schema doesn't describe this object level: scrub-only, never wider
-            return _scrub(value, dropped, depth)
+            # reviewed-schema mode: an object level the schema does not
+            # describe is DENIED, never passed through a lenient scrub
+            # (review2 P0-4: unknown object structures default to reject)
+            dropped.add("<unspecified_object>")
+            return {}
         out: dict[str, Any] = {}
         for key, item in value.items():
             key_text = str(key)
@@ -129,10 +156,7 @@ def _project(value: Any, schema: dict[str, Any], dropped: _Dropped, depth: int =
             for item in value[:MAX_ARRAY_ITEMS]
         ]
         return projected
-    # scalar: type-check against the schema, then redact string values
-    if expected and not _type_ok(value, str(expected)):
-        dropped.add(f"<type:{expected}>")
-        return None
+    # scalar: type gate already ran; redact string values
     if isinstance(value, str):
         return _redact_string(value)
     return value
@@ -154,6 +178,14 @@ def project_response(
     schema_properties = schema.get("properties")
 
     if isinstance(schema_properties, dict) and schema_properties:
+        # P0-4: one authoritative allow set - when the reviewed schema and
+        # allow_fields are both present the INTERSECTION governs the top
+        # level; the schema alone governs when allow_fields is empty
+        if allow_fields:
+            effective_properties = {
+                k: v for k, v in schema_properties.items() if k in set(allow_fields)
+            }
+            schema = {**schema, "properties": effective_properties}
         projected = _project(body, schema, dropped)
         kept = projected if isinstance(projected, dict) else {}
     else:

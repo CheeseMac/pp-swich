@@ -257,3 +257,70 @@ class TestFingerprint:
         a = fingerprint_operation("GET", "/api/customers/{id}", ["verbose"])
         b = fingerprint_operation("GET", "/api/customers/{id}", ["fields"])
         assert a != b
+
+
+# --- review2: SEC-036 sanitization + path PII abstraction -----------------
+
+
+def test_openapi_example_annotations_stripped():
+    from ppswitch_discovery.parsers.openapi import sanitize_schema
+
+    canary = "CANARY_NOT_REAL_ABC123"
+    sk = "sk-AZ123456789012345678"
+    raw = {
+        "type": "object",
+        "properties": {
+            "q": {"type": "string", "example": canary, "default": sk,
+                   "examples": [canary], "x-example": sk},
+            "note": {"type": "string", "description": f"see {canary}"},
+            "state": {"type": "string", "enum": ["ok", canary]},
+            "safe": {"type": "integer", "enum": [1, 2, 3]},
+        },
+    }
+    clean = sanitize_schema(raw)
+    blob = repr(clean)
+    assert canary not in blob and sk not in blob
+    assert "example" not in blob and "default" not in blob
+    # a canary inside an enum drops the whole enum; a clean enum survives
+    assert "enum" not in clean["properties"]["state"]
+    assert clean["properties"]["safe"]["enum"] == [1, 2, 3]
+    # descriptions are redacted, not dropped
+    assert "<REDACTED>" in clean["properties"]["note"]["description"]
+
+
+def test_openapi_import_strips_canaries_from_candidates():
+    from ppswitch_discovery.parsers.openapi import build_candidates_from_openapi
+
+    doc = {
+        "openapi": "3.1.0",
+        "paths": {
+            "/v1/ping": {
+                "get": {
+                    "parameters": [
+                        {"name": "key", "in": "query",
+                         "schema": {"type": "string", "example": "sk-AZ123456789012345678"}},
+                    ],
+                    "responses": {"200": {"content": {"application/json": {
+                        "schema": {"type": "object", "properties": {
+                            "url": {"type": "string", "default": "https://x/CANARY_NOT_REAL_ABC123"},
+                        }}}}},
+                    }},
+            }
+        },
+    }
+    result = build_candidates_from_openapi(doc)
+    assert result.candidates
+    blob = repr(result.candidates[0].input_schema) + repr(result.candidates[0].output_schema)
+    assert "CANARY" not in blob and "sk-AZ" not in blob
+
+
+def test_path_pii_segments_abstracted():
+    from ppswitch_discovery.normalizer import normalize_path
+
+    result = normalize_path("GET", "/users/alice@example.com/orders")
+    assert result.template == "/users/{email}/orders"
+    jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4"
+    result = normalize_path("GET", f"/sessions/{jwt}")
+    assert result.template == "/sessions/{token}"
+    # literal words still stay literal
+    assert normalize_path("GET", "/api/v1/search").template == "/api/v1/search"

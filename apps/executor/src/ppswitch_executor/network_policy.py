@@ -25,6 +25,7 @@ import socket
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+import httpcore
 from ppswitch_core.errors import ApiError, ErrorCode
 
 
@@ -111,3 +112,60 @@ def check_outbound_target(
         # approved above; the approval itself is the review record
 
     return TargetCheck(url=url, host=host, port=port, resolved_ips=resolved)
+
+
+class PinningNetworkBackend(httpcore.SyncBackend):
+    """True connect-time IP pinning (review2 P0-3 / SEC-034).
+
+    Installed as the ``httpcore`` network backend of the validating
+    transport: ``connect_tcp`` resolves + policy-validates the host and
+    then delegates to ``SyncBackend.connect_tcp`` on the VALIDATED IP
+    literal. Because the address handed down is a literal, neither
+    httpcore nor the OS performs a second DNS resolution - the IP actually
+    connected is exactly the one the check produced. TLS SNI and
+    certificate hostname verification remain bound to the original origin
+    hostname (httpcore derives ``server_hostname`` from the request URL,
+    not from the backend's connect target), so pinning does not weaken
+    certificate validation.
+    """
+
+    def __init__(self, approved_hosts: list[str], checker=check_outbound_target) -> None:
+        super().__init__()
+        self._approved_hosts = approved_hosts
+        self._checker = checker
+
+    def _validated_ip(self, host: str, port: int) -> str:
+        # httpcore passes IPv6 literals without brackets; rebuild a URL the
+        # checker can parse. The scheme placeholder only matters for the
+        # checker's scheme allowlist (http/https both pass); the real scheme
+        # was validated on the actual request URL by the transport.
+        if ":" in host and not host.startswith("["):
+            target = f"https://[{host}]:{port}/"
+        else:
+            target = f"https://{host}:{port}/"
+        from ppswitch_core.errors import ApiError as _ApiError
+
+        try:
+            check = self._checker(target, self._approved_hosts)
+        except _ApiError as exc:
+            # same failure mode as the transport-level check: fail closed,
+            # surfaced as a policy violation rather than a transport error
+            raise NetworkPolicyViolation(exc.message) from exc
+        # prefer IPv4 when both families are returned (deterministic)
+        ipv4 = [ip for ip in check.resolved_ips if "." in ip]
+        return (ipv4 or check.resolved_ips)[0]
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout=None,
+        local_address=None,
+        socket_options=None,
+    ):
+        pinned_ip = self._validated_ip(host, port)
+        # connect to the validated literal; no further DNS lookup happens
+        return super().connect_tcp(
+            pinned_ip, port, timeout=timeout,
+            local_address=local_address, socket_options=socket_options,
+        )

@@ -52,16 +52,17 @@ def stack(tmp_path_factory, start_server_fixture):
         workspace = WorkspaceRow(id=uuid.uuid4(), slug="e2e-demo", name="E2E Demo")
         session.add(workspace)
         session.flush()
-        for kind, name, token in (
-            ("user", "Alice (e2e)", ALICE_TOKEN),
-            ("user", "Carol (e2e)", CAROL_TOKEN),
-            ("agent", "agent-helper (e2e)", AGENT_TOKEN),
+        # review2 R-13: alice administers, carol reviews/publishes
+        for kind, name, token, role in (
+            ("user", "Alice (e2e)", ALICE_TOKEN, "admin"),
+            ("user", "Carol (e2e)", CAROL_TOKEN, "reviewer"),
+            ("agent", "agent-helper (e2e)", AGENT_TOKEN, None),
         ):
             session.add(
                 PrincipalRow(
                     id=uuid.uuid4(), workspace_id=workspace.id, kind=kind,
                     display_name=name, token_hash=hash_token(token),
-                    token_hint=token[:14] + "...",
+                    token_hint=token[:14] + "...", role=role,
                 )
             )
         session.commit()

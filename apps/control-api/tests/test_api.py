@@ -296,7 +296,14 @@ class TestAgentGrants:
         listing = control.get("/api/v1/dev/principals", headers=auth(ALICE_TOKEN))
         agent = next(p for p in listing.json()["data"] if p["kind"] == "agent")
         self._grant_agent(demo.harness, ids)
-        # alice binds her profile into the agent's scope (agent:<verified-id>)
+        # review2 P0-2: alice delegates to the agent, then binds her profile
+        # into her own scope under the agent:<verified-id> context
+        delegation = control.post(
+            "/api/v1/delegations",
+            json={"agent_principal_id": agent["id"], "scopes": []},
+            headers=auth(ALICE_TOKEN),
+        )
+        assert delegation.status_code == 201, delegation.text
         binding = control.put(
             f"/api/v1/active-bindings/{ids['service_id']}/agent:{agent['id']}",
             json={"profile_id": ids["profile_A"], "expected_version": 0},

@@ -45,7 +45,7 @@ def demo(harness: Harness) -> Demo:
     return Demo(harness=harness, ids=bootstrap_demo(harness))
 
 
-def _make_principal(session, workspace_id, kind, name, token) -> PrincipalRow:
+def _make_principal(session, workspace_id, kind, name, token, role=None) -> PrincipalRow:
     principal = PrincipalRow(
         id=uuid.uuid4(),
         workspace_id=workspace_id,
@@ -53,6 +53,7 @@ def _make_principal(session, workspace_id, kind, name, token) -> PrincipalRow:
         display_name=name,
         token_hash=hash_token(token),
         token_hint=token[:14] + "...",
+        role=role,  # review2 R-13: workspace role for human principals
     )
     session.add(principal)
     return principal
@@ -78,8 +79,8 @@ def harness(tmp_path: Path) -> Harness:
         ws_b = WorkspaceRow(id=uuid.uuid4(), slug=f"demo-b-{uuid.uuid4().hex[:6]}", name="Demo B")
         session.add_all([ws_a, ws_b])
         session.flush()
-        _make_principal(session, ws_a.id, "user", "Alice (demo)", ALICE_TOKEN)
-        _make_principal(session, ws_a.id, "user", "Carol (demo)", CAROL_TOKEN)
+        _make_principal(session, ws_a.id, "user", "Alice (demo)", ALICE_TOKEN, role="admin")
+        _make_principal(session, ws_a.id, "user", "Carol (demo)", CAROL_TOKEN, role="reviewer")
         _make_principal(session, ws_b.id, "user", "Bob (other org)", BOB_TOKEN)
         _make_principal(session, ws_a.id, "agent", "agent-helper (demo)", AGENT_TOKEN)
         session.commit()

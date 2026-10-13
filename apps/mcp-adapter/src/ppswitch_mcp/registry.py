@@ -21,6 +21,7 @@ import keyword
 from typing import Any
 
 from ppswitch import PPSwitchClient
+from ppswitch_core.naming import mcp_tool_name
 
 _TYPE_MAP = {
     "string": str,
@@ -32,9 +33,8 @@ _TYPE_MAP = {
 }
 
 
-def mcp_tool_name(capability_name: str) -> str:
-    """Public tool naming: dots become underscores (docs/04 section 3)."""
-    return capability_name.replace(".", "_")
+class ToolNameConflict(Exception):
+    """Two capabilities map to the same public MCP tool name (SEC-040)."""
 
 
 def capability_name_for(mcp_name: str) -> str | None:
@@ -73,11 +73,18 @@ def build_tool_function(
     properties = (input_schema or {}).get("properties") or {}
     required = set((input_schema or {}).get("required") or [])
 
+    # SEC-039: required parameters MUST come first - a reviewed schema with
+    # an optional parameter ahead of a required one would otherwise raise
+    # "non-default argument follows default argument" from inspect
+    ordered = [name for name in properties if name in required] + [
+        name for name in properties if name not in required
+    ]
+
     parameters = []
-    for name, prop in properties.items():
+    for name in ordered:
         if not name.isidentifier() or keyword.iskeyword(name):
             continue  # reviewed schemas should be clean; skip pathological names
-        annotation = _TYPE_MAP.get(str((prop or {}).get("type")), str)
+        annotation = _TYPE_MAP.get(str((properties[name] or {}).get("type")), str)
         if name in required:
             parameters.append(
                 inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD,
@@ -107,18 +114,30 @@ def build_tool_function(
 
 
 def register_capability_tools(server, client: PPSwitchClient) -> int:
-    """Register every published capability as an MCP tool. Returns count."""
+    """Register every published capability as an MCP tool. Returns count.
+
+    SEC-040: a name collision is NEVER silently overwritten - the second
+    mapping raises instead of shadowing the first tool.
+    """
     registered = 0
+    seen: dict[str, str] = {}
     for capability in published_capabilities(client):
         version = latest_published_version(capability)
         if version is None:
             continue
+        tool_name = mcp_tool_name(capability["name"])
+        if tool_name in seen:
+            raise ToolNameConflict(
+                f"Capabilities {seen[tool_name]!r} and {capability['name']!r} both map "
+                f"to MCP tool name {tool_name!r}"
+            )
+        seen[tool_name] = capability["name"]
         fn = build_tool_function(
             client,
             capability["name"],
             version.get("input_schema") or {},
             capability.get("description") or capability.get("display_name", ""),
         )
-        server.add_tool(fn, name=mcp_tool_name(capability["name"]))
+        server.add_tool(fn, name=tool_name)
         registered += 1
     return registered

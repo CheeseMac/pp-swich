@@ -193,18 +193,17 @@ def activate_binding(
     - profile owned by someone else in this workspace -> 403;
     - disabled profile / inactive connection / unapproved endpoint -> 403.
 
-    Agent contexts: an ``agent:<verified-id>`` context_key writes the
-    binding into that agent's personal scope so the agent's own invocations
-    pick it up. The caller must own the profile; the agent principal is
-    resolved server-side and never trusted from the payload.
+    Agent contexts (P0-2 / SEC-033): the binding row lives in the
+    CALLING user's own scope under the full ``agent:<id>`` context key.
+    Two users delegating to the same agent therefore maintain separate
+    bindings and can never overwrite each other. The route layer already
+    verified an active delegation to ``agent_principal_id``.
     """
     binding_principal_id = caller_principal_id
     stored_context = context_key
     if context_key.startswith("agent:"):
         if agent_principal_id is None:
             raise ApiError(ErrorCode.BAD_REQUEST, "Unknown agent principal for context")
-        binding_principal_id = agent_principal_id
-        stored_context = "personal"  # the agent's own scope
 
     profile = session.get(ProfileRow, profile_id)
     if profile is None or profile.workspace_id != workspace_id:

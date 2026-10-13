@@ -205,6 +205,26 @@ def publish_capability(
             {"current_status": current.value},
         )
 
+    # SEC-040 (review2 R-10): a capability whose public tool name collides
+    # with an already-published one is refused - the MCP registry must
+    # never silently shadow a tool
+    from ppswitch_core.naming import mcp_tool_name
+
+    this_tool = mcp_tool_name(capability.name)
+    already_published = session.scalars(
+        select(CapabilityRow).where(
+            CapabilityRow.workspace_id == workspace_id,
+            CapabilityRow.status == CapabilityStatus.PUBLISHED.value,
+        )
+    ).all()
+    for other in already_published:
+        if other.id != capability.id and mcp_tool_name(other.name) == this_tool:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Publishing would collide with an existing public tool name",
+                {"tool_name": this_tool, "existing_capability": other.name},
+            )
+
     draft = session.scalars(
         select(CapabilityVersionRow)
         .where(CapabilityVersionRow.capability_id == capability_id)

@@ -52,6 +52,10 @@ from sqlalchemy.orm import Session
 PLAN_DEADLINE_S = 30.0
 
 
+def epoch_now() -> float:
+    return time.time()
+
+
 def _epoch(value) -> float:
     """Epoch seconds, treating naive datetimes as UTC.
 
@@ -132,9 +136,113 @@ def invoke_capability(
         raise ApiError(ErrorCode.CAPABILITY_NOT_FOUND, "Capability not found")
     version_row = _load_published_version(session, capability, capability_version)
 
+    # --- context normalization (P0-2): agent contexts belong to agents and
+    # are validated against the authenticated principal, never trusted.
+    delegating_user_id: UUID | None = None
+    if principal_kind == PrincipalKind.AGENT.value:
+        if context_key.startswith("agent:"):
+            parts = context_key.split(":", 2)
+            claimed_agent = parts[1]
+            # the agent id embedded in the context MUST be the caller itself
+            if claimed_agent != str(principal_id):
+                _audit(
+                    session, workspace_id, principal_id, "invocation.deny", "denied",
+                    {"capability": capability_name, "reason": "agent_context_mismatch"},
+                )
+                session.commit()
+                raise ApiError(
+                    ErrorCode.FORBIDDEN, "Agent context does not match the caller"
+                )
+        elif context_key.startswith("deployment:"):
+            _audit(
+                session, workspace_id, principal_id, "invocation.deny", "denied",
+                {"capability": capability_name, "reason": "agent_deployment_context"},
+            )
+            session.commit()
+            raise ApiError(
+                ErrorCode.FORBIDDEN, "Deployment contexts are user-scoped"
+            )
+        # "personal" from an agent maps server-side to its own agent context
+    elif context_key.startswith("agent:"):
+        _audit(
+            session, workspace_id, principal_id, "invocation.deny", "denied",
+            {"capability": capability_name, "reason": "user_agent_context"},
+        )
+        session.commit()
+        raise ApiError(
+            ErrorCode.FORBIDDEN, "Agent contexts may only be used by that agent"
+        )
+
+    # --- agent grants: agents act only on explicitly granted capabilities
+    grant_scopes: list[str] | None = None  # None = unrestricted
+    if principal_kind == PrincipalKind.AGENT.value:
+        grants = session.scalars(
+            select(AgentGrantRow).where(
+                AgentGrantRow.workspace_id == workspace_id,
+                AgentGrantRow.agent_principal_id == principal_id,
+                AgentGrantRow.capability_id == capability.id,
+            )
+        ).all()
+        now = epoch_now()
+        active_grants = [
+            g for g in grants
+            if g.expires_at is None or _epoch(g.expires_at) >= now
+        ]
+        if not active_grants:
+            _audit(
+                session, workspace_id, principal_id, "invocation.deny", "denied",
+                {"capability": capability_name, "reason": "agent_missing_grant"},
+            )
+            session.commit()  # keep the deny audit even though we 403
+            raise ApiError(ErrorCode.FORBIDDEN, "Agent is not granted this capability")
+        # any grant without scopes is unrestricted for this capability
+        if any(not (g.scopes or []) for g in active_grants):
+            grant_scopes = None
+        else:
+            grant_scopes = sorted({s for g in active_grants for s in (g.scopes or [])})
+
+    # --- delegation (P0-2 / SEC-033): an agent acts for a user only under
+    # an ACTIVE delegation; the delegating user's bindings are the ones used
+    delegation_scopes: list[str] | None = None
+    if principal_kind == PrincipalKind.AGENT.value:
+        from ppswitch_control.services.delegation_service import (
+            active_delegations_for_agent,
+        )
+
+        delegations = active_delegations_for_agent(session, workspace_id, principal_id)
+        # explicit "agent:<id>:<user>" disambiguates shared agents
+        parts = context_key.split(":", 2)
+        if len(parts) == 3:
+            try:
+                wanted = UUID(parts[2])
+            except ValueError as exc:
+                raise ApiError(ErrorCode.BAD_REQUEST, "Invalid agent context") from exc
+            delegations = [d for d in delegations if d.user_principal_id == wanted]
+        if len(delegations) == 1:
+            delegating_user_id = delegations[0].user_principal_id
+            delegation_scopes = delegations[0].scopes or None
+        elif not delegations:
+            _audit(
+                session, workspace_id, principal_id, "invocation.deny", "denied",
+                {"capability": capability_name, "reason": "agent_no_delegation"},
+            )
+            session.commit()
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                "Agent has no active user delegation; a user must delegate first",
+            )
+        else:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Multiple active delegations; disambiguate with agent:<id>:<user>",
+            )
+
     # --- idempotency: a key replays ONLY for the same principal invoking the
     # same capability version with the same arguments (review PR-SEC-02 /
     # SEC-025). A key reused by anyone else is a conflict, never their data.
+    # R-07 / SEC-037: the replay happens AFTER grant + delegation checks -
+    # an expired grant or a revoked delegation can no longer read cached
+    # results through an old idempotency key.
     if idempotency_key:
         existing = session.scalars(
             select(InvocationRow).where(
@@ -162,42 +270,30 @@ def invoke_capability(
                 "idempotent_replay": True,
             }
 
-    # --- agent grants: agents act only on explicitly granted capabilities
-    if principal_kind == PrincipalKind.AGENT.value:
-        grants = session.scalars(
-            select(AgentGrantRow).where(
-                AgentGrantRow.workspace_id == workspace_id,
-                AgentGrantRow.agent_principal_id == principal_id,
-                AgentGrantRow.capability_id == capability.id,
-            )
-        ).all()
-        now = time.time()
-        grant_expired = all(
-            g.expires_at is not None and _epoch(g.expires_at) < now for g in grants
-        )
-        if not grants or grant_expired:
-            _audit(
-                session, workspace_id, principal_id, "invocation.deny", "denied",
-                {"capability": capability_name, "reason": "agent_missing_grant"},
-            )
-            session.commit()  # keep the deny audit even though we 403
-            raise ApiError(ErrorCode.FORBIDDEN, "Agent is not granted this capability")
-
     # --- argument validation: reserved names + strict schema
     validate_arguments(arguments, version_row.input_schema or {})
 
-    # --- active binding resolution (capability -> operation -> service)
+    # --- active binding resolution (capability -> operation -> service).
+    # P0-2 / SEC-033: an agent resolves the DELEGATING user's binding under
+    # that agent's context - never a binding shared across users.
     operation_version = session.get(OperationVersionRow, version_row.operation_version_id)
     assert operation_version is not None  # FK-guaranteed by the registry
     operation = session.get(OperationRow, operation_version.operation_id)
     assert operation is not None
+    if principal_kind == PrincipalKind.AGENT.value:
+        binding_principal_id = delegating_user_id
+        binding_context = f"agent:{principal_id}"
+    else:
+        binding_principal_id = principal_id
+        binding_context = context_key
+    assert binding_principal_id is not None
     binding = session.get(
         ActiveBindingRow,
         {
             "workspace_id": workspace_id,
-            "principal_id": principal_id,
+            "principal_id": binding_principal_id,
             "service_id": operation.service_id,
-            "context_key": context_key,
+            "context_key": binding_context,
         },
     )
     if binding is None:
@@ -231,6 +327,31 @@ def invoke_capability(
         )
         session.commit()  # keep the deny audit even though we 403
         raise ApiError(ErrorCode.FORBIDDEN, "Invocation denied by policy")
+
+    # --- scope intersection (R-06 / SEC-041): AgentGrant, Connection and
+    # Delegation scopes all constrain the call; an empty intersection denies.
+    # A missing/empty scope set on any layer means that layer is
+    # unrestricted; the intersection is then governed by the others.
+    scope_sets = [
+        grant_scopes,
+        connection.scopes or None,
+        delegation_scopes,
+    ]
+    effective_scopes: set[str] | None = None  # None = unrestricted
+    for scopes in scope_sets:
+        if scopes:
+            effective_scopes = set(scopes) if effective_scopes is None else (
+                effective_scopes & set(scopes)
+            )
+    if effective_scopes is not None and not effective_scopes:
+        _audit(
+            session, workspace_id, principal_id, "invocation.deny", "denied",
+            {"capability": capability_name, "reason": "scope_intersection_empty"},
+        )
+        session.commit()
+        raise ApiError(
+            ErrorCode.FORBIDDEN, "No scope is permitted by grant, connection and delegation"
+        )
 
     execution = version_row.execution or {}
     plan = InvocationPlan(
@@ -279,6 +400,12 @@ def invoke_capability(
         "policy_version": version_row.policy_ref,
         "arguments_digest": plan.arguments_digest,
         "risk_level": version_row.risk_level,
+        # P0-2: which user the agent acted for (None for direct user calls)
+        "delegating_user_id": (
+            str(delegating_user_id) if delegating_user_id is not None else None
+        ),
+        # R-06: the scope set that actually authorized this call
+        "effective_scopes": sorted(effective_scopes) if effective_scopes is not None else [],
     }
 
     invocation = InvocationRow(

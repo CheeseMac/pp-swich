@@ -24,7 +24,7 @@ from ppswitch_core.enums import AuthScheme
 from ppswitch_core.errors import ApiError, ErrorCode
 from ppswitch_secrets import CredentialMaterial
 
-from ppswitch_executor.network_policy import NetworkPolicyViolation
+from ppswitch_executor.network_policy import NetworkPolicyViolation, PinningNetworkBackend
 
 REQUEST_TIMEOUT_S = 10.0
 MAX_READ_BYTES = 8 * 1024 * 1024  # hard cap before the guard's own budget
@@ -45,17 +45,29 @@ def _segment_value(placeholder: str, value: Any) -> str:
 
 
 class NetworkValidatingTransport(httpx.HTTPTransport):
-    """Re-resolves and re-validates the target at request time.
+    """Validates the target at request time AND pins the connected IP.
 
-    Closes the DNS rebinding window between the pre-flight check and the
-    actual connection (SEC-008): if DNS answers differently by the time the
-    request goes out, the request is refused before any bytes are sent.
+    Two layers (review2 P0-3 / SEC-034):
+
+    1. ``handle_request`` re-runs the full policy check on the final URL
+       (fail fast, before any connection attempt);
+    2. the underlying ``httpcore`` pool uses a :class:`PinningNetworkBackend`
+       that resolves, policy-validates and connects to a VALIDATED IP
+       literal - there is no second DNS resolution between the check and
+       the socket, so a rebinding answer cannot change the connected
+       address. TLS SNI / certificate checks stay bound to the origin
+       hostname.
     """
 
     def __init__(self, approved_hosts: list[str], checker) -> None:
         super().__init__()
         self._approved_hosts = approved_hosts
         self._checker = checker
+        # swap the connection pool's backend for the pinning one; the pool
+        # itself (keepalive, retries, TLS wrap by origin hostname) is reused
+        self._pool._network_backend = PinningNetworkBackend(  # type: ignore[attr-defined]
+            approved_hosts, checker
+        )
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         try:

@@ -23,6 +23,10 @@ _NUMERIC_PATTERN = re.compile(r"^\d+$")
 _HEX_HASH_PATTERN = re.compile(r"^[0-9a-fA-F]{16,}$")
 _MIXED_ID_PATTERN = re.compile(r"^(?=.*\d)[A-Za-z0-9_-]{6,}$")
 _VERSION_PATTERN = re.compile(r"^v\d+(\.\d+)?$")
+# review2 P0-5: PII-shaped segments (emails, JWT-ish long tokens) are
+# abstracted like any other identifier - they never persist verbatim
+_EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_JWT_PATTERN = re.compile(r"^eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]*$")
 
 # route words that must never be treated as identifiers even when they
 # contain digits (none today, reserved for tuning)
@@ -55,6 +59,10 @@ def classify_segment(segment: str) -> str | None:
         return "{hash}"
     if _MIXED_ID_PATTERN.match(segment):
         return "{id}"
+    if _EMAIL_PATTERN.match(segment):
+        return "{email}"
+    if _JWT_PATTERN.match(segment):
+        return "{token}"
     return None
 
 
