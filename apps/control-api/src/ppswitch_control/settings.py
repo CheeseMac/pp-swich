@@ -42,6 +42,14 @@ class ControlSettings(BaseModel):
     # local runtime directory (gitignored) where seed-demo writes synthetic
     # dev tokens so the demo login can list them; never committed
     dev_tokens_path: str = "data/dev-tokens.json"
+    # review4: production signs delegation context tickets with a DEDICATED
+    # key, never the executor-internal shared secret; empty falls back to
+    # internal_token for local/demo use and fails production validation
+    delegation_signing_key: str = os.environ.get("PP_SWITCH_DELEGATION_SIGNING_KEY", "")
+
+    @property
+    def effective_delegation_key(self) -> str:
+        return self.delegation_signing_key or self.internal_token
 
     @classmethod
     def from_env(cls) -> ControlSettings:

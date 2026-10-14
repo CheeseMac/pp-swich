@@ -24,6 +24,18 @@ def _validate_production_settings(settings: ControlSettings) -> None:
             "internal token: set PP_SWITCH_INTERNAL_TOKEN via your deployment "
             "platform (review PR-SEC-05)."
         )
+    # review4: delegation context tickets are signed with a DEDICATED key -
+    # never the executor-internal shared secret - so ticket verification and
+    # executor authentication remain independent trust roots
+    if (
+        not settings.delegation_signing_key
+        or settings.delegation_signing_key == settings.internal_token
+    ):
+        raise RuntimeError(
+            "Refusing to start outside demo mode without a dedicated delegation "
+            "signing key: set PP_SWITCH_DELEGATION_SIGNING_KEY (must differ from "
+            "PP_SWITCH_INTERNAL_TOKEN) - review4 ADR-005."
+        )
 
 
 def create_app(

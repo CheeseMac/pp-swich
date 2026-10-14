@@ -76,6 +76,39 @@ def _arguments_digest(arguments: dict) -> str:
     ).hexdigest()
 
 
+def _authorize_scope_chain(
+    *,
+    grant_scopes: list[str] | None,
+    connection_scopes: list[str] | None,
+    delegation_scopes: list[str] | None,
+    required_scopes: list[str],
+) -> set[str] | None:
+    """R-06/SEC-041 + SEC-044/SEC-049: the single scope authority.
+
+    Returns the effective scope set (None = unrestricted), or raises
+    FORBIDDEN when the chain no longer authorizes the call. Shared by the
+    live invocation path AND the idempotent replay path so a narrowed or
+    revoked authorization can never be bypassed through the cache.
+    """
+    effective: set[str] | None = None  # None = unrestricted
+    for scopes in (grant_scopes, connection_scopes, delegation_scopes):
+        if scopes:
+            effective = set(scopes) if effective is None else (effective & set(scopes))
+    if effective is not None and not effective:
+        raise ApiError(
+            ErrorCode.FORBIDDEN, "No scope is permitted by grant, connection and delegation"
+        )
+    if required_scopes:
+        missing = set(required_scopes) - (effective or set())
+        if effective is None or missing:
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                "Capability requires scopes not covered by the authorization chain",
+                {"missing_scopes": sorted(missing) or sorted(required_scopes)},
+            )
+    return effective
+
+
 def _audit(
     session: Session, workspace_id: UUID, principal_id: UUID, action: str,
     decision: str, metadata: dict, invocation_id: UUID | None = None,
@@ -219,7 +252,7 @@ def invoke_capability(
         if delegation_context is not None:
             payload = verify_delegation_context(
                 delegation_context,
-                secret=settings.internal_token,
+                secret=settings.effective_delegation_key,
                 workspace_id=workspace_id,
                 agent_principal_id=principal_id,
             )
@@ -289,6 +322,43 @@ def invoke_capability(
                     ErrorCode.IDEMPOTENCY_KEY_CONFLICT,
                     "Idempotency key already used by a different request",
                 )
+            # SEC-049: a narrowed or revoked authorization must not be
+            # bypassed through the cache. The CURRENT grant/delegation
+            # scopes were resolved above; the recorded connection is
+            # re-loaded and must still be active, and the whole scope
+            # chain is re-validated against this version's requirements.
+            recorded_connection_id = existing.profile_snapshot.get("connection_id")
+            replay_connection = (
+                session.get(ConnectionRow, UUID(recorded_connection_id))
+                if recorded_connection_id else None
+            )
+            if replay_connection is None or replay_connection.status != "active":
+                _audit(
+                    session, workspace_id, principal_id, "invocation.deny", "denied",
+                    {"capability": capability_name, "reason": "replay_connection_revoked"},
+                )
+                session.commit()
+                raise ApiError(
+                    ErrorCode.FORBIDDEN,
+                    "Cached result is no longer authorized (connection revoked)",
+                )
+            try:
+                _authorize_scope_chain(
+                    grant_scopes=grant_scopes,
+                    connection_scopes=replay_connection.scopes or None,
+                    delegation_scopes=delegation_scopes,
+                    required_scopes=list(version_row.required_scopes or []),
+                )
+            except ApiError as exc:
+                _audit(
+                    session, workspace_id, principal_id, "invocation.deny", "denied",
+                    {"capability": capability_name, "reason": "replay_scope_revoked"},
+                )
+                session.commit()
+                raise ApiError(
+                    ErrorCode.FORBIDDEN,
+                    "Cached result is no longer authorized by the current scope chain",
+                ) from exc
             return {
                 "invocation_id": str(existing.id),
                 "status": existing.status,
@@ -355,54 +425,24 @@ def invoke_capability(
         session.commit()  # keep the deny audit even though we 403
         raise ApiError(ErrorCode.FORBIDDEN, "Invocation denied by policy")
 
-    # --- scope intersection (R-06 / SEC-041): AgentGrant, Connection and
-    # Delegation scopes all constrain the call; an empty intersection denies.
-    # A missing/empty scope set on any layer means that layer is
-    # unrestricted; the intersection is then governed by the others.
-    scope_sets = [
-        grant_scopes,
-        connection.scopes or None,
-        delegation_scopes,
-    ]
-    effective_scopes: set[str] | None = None  # None = unrestricted
-    for scopes in scope_sets:
-        if scopes:
-            effective_scopes = set(scopes) if effective_scopes is None else (
-                effective_scopes & set(scopes)
-            )
-    if effective_scopes is not None and not effective_scopes:
+    # --- scope intersection (R-06/SEC-041) + required scopes (SEC-044):
+    # delegated to the shared guard so replay and live paths can never
+    # disagree on what the chain authorizes
+    required_scopes = list(version_row.required_scopes or [])
+    try:
+        effective_scopes = _authorize_scope_chain(
+            grant_scopes=grant_scopes,
+            connection_scopes=connection.scopes or None,
+            delegation_scopes=delegation_scopes,
+            required_scopes=required_scopes,
+        )
+    except ApiError as exc:
         _audit(
             session, workspace_id, principal_id, "invocation.deny", "denied",
-            {"capability": capability_name, "reason": "scope_intersection_empty"},
+            {"capability": capability_name, "reason": "scope_chain_denied"},
         )
-        session.commit()
-        raise ApiError(
-            ErrorCode.FORBIDDEN, "No scope is permitted by grant, connection and delegation"
-        )
-
-    # --- required scopes (review3 SEC-044): a capability that declares
-    # required_scopes must be covered EXPLICITLY by the authorization chain.
-    # A non-empty intersection is not authorization: every required scope
-    # must be inside it, and an empty/unscoped chain (None) never satisfies
-    # a scoped capability - explicit, least-privilege by default.
-    required_scopes = list(version_row.required_scopes or [])
-    if required_scopes:
-        missing = set(required_scopes) - (effective_scopes or set())
-        if effective_scopes is None or missing:
-            _audit(
-                session, workspace_id, principal_id, "invocation.deny", "denied",
-                {
-                    "capability": capability_name,
-                    "reason": "required_scopes_not_covered",
-                    "missing": sorted(missing),
-                },
-            )
-            session.commit()
-            raise ApiError(
-                ErrorCode.FORBIDDEN,
-                "Capability requires scopes not covered by the authorization chain",
-                {"missing_scopes": sorted(missing) or sorted(required_scopes)},
-            )
+        session.commit()  # keep the deny audit even though we 403
+        raise exc
 
     execution = version_row.execution or {}
     plan = InvocationPlan(

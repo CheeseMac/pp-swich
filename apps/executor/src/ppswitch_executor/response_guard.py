@@ -194,6 +194,17 @@ def project_response(
     schema: dict[str, Any] = dict(output_schema or {})
     schema_properties = schema.get("properties")
 
+    # SEC-051 (review4): a reviewed schema that is itself an unresolved
+    # reference declares nothing projectable - refuse BEFORE any fallback
+    # path could run, so a root "$ref" can never reach the lenient
+    # allow_fields+scrub compatibility branch
+    if schema and "$ref" in schema:
+        raise ApiError(
+            ErrorCode.UPSTREAM_FAILURE,
+            "Capability output schema is an unresolved reference; refusing to project",
+            {"reason": "root_schema_unresolved_ref"},
+        )
+
     if isinstance(schema_properties, dict) and schema_properties:
         # P0-4: one authoritative allow set - when the reviewed schema and
         # allow_fields are both present the INTERSECTION governs the top

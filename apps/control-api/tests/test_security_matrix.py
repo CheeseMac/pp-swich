@@ -276,10 +276,26 @@ class TestSEC030DemoProductionIsolation:
                 db_url=demo.harness.db_url, demo_mode=False, auto_migrate=False,
             ))
 
-        # with a strong token the apps start, but dev surfaces stay off
+        # review4: outside demo mode the delegation ticket key must be
+        # dedicated - missing, or equal to the internal token, both refuse
+        with pytest.raises(RuntimeError):
+            create_app(ControlSettings(
+                db_url=demo.harness.db_url, demo_mode=False,
+                internal_token="ci-strong-token-9f21ab", auto_migrate=False,
+            ))
+        with pytest.raises(RuntimeError):
+            create_app(ControlSettings(
+                db_url=demo.harness.db_url, demo_mode=False,
+                internal_token="ci-strong-token-9f21ab",
+                delegation_signing_key="ci-strong-token-9f21ab", auto_migrate=False,
+            ))
+
+        # with a strong token AND a dedicated ticket key the apps start,
+        # but dev surfaces stay off
         control_app = create_app(ControlSettings(
             db_url=demo.harness.db_url, demo_mode=False,
-            internal_token="ci-strong-token-9f21ab", auto_migrate=False,
+            internal_token="ci-strong-token-9f21ab",
+            delegation_signing_key="ci-ticket-key-2c81dd", auto_migrate=False,
         ))
         client = TestClient(control_app)
         assert client.get("/api/v1/dev/principals").status_code == 404

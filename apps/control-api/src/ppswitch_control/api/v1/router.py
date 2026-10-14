@@ -984,6 +984,48 @@ def create_invocation(
     return ok(request, result, 200)
 
 
+def _agent_invocation_scope(
+    request: Request, auth: AuthContext, session: Session
+) -> str | None:
+    """SEC-050: agents read history ONLY under a delegation context.
+
+    A shared agent's credential alone must not enumerate other users'
+    results: the acting user comes from a signed ticket (X-Delegation-
+    Context header) and history is filtered to that delegating user.
+    A ticket proves issuance, NOT continued validity - the underlying
+    delegation must still be active (revocation is checked live).
+    Returns the acting user id, or None for non-agent principals.
+    """
+    if auth.principal.kind != "agent":
+        return None
+    ticket = request.headers.get("x-delegation-context", "")
+    if not ticket:
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Agents must present a delegation context to read invocation history",
+        )
+    from ppswitch_db.models import DelegationRow
+
+    from ppswitch_control.services.delegation_service import (
+        is_active,
+        verify_delegation_context,
+    )
+
+    payload = verify_delegation_context(
+        ticket,
+        secret=request.app.state.settings.effective_delegation_key,
+        workspace_id=auth.workspace_id,
+        agent_principal_id=auth.principal_id,
+    )
+    delegation = session.get(DelegationRow, UUID(payload["delegation_id"]))
+    if delegation is None or not is_active(delegation):
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Delegation context no longer corresponds to an active delegation",
+        )
+    return str(payload["user_id"])
+
+
 @router.get("/invocations")
 def list_invocations(
     request: Request,
@@ -991,6 +1033,7 @@ def list_invocations(
     auth: AuthContext = Depends(require_permission("invocations.read")),
     session: Session = Depends(get_session),
 ):
+    acting_user = _agent_invocation_scope(request, auth, session)
     rows = session.scalars(
         select(InvocationRow)
         .where(
@@ -1001,6 +1044,12 @@ def list_invocations(
         .order_by(InvocationRow.created_at.desc())
         .limit(min(limit, 200))
     ).all()
+    if acting_user is not None:
+        # SEC-050: a shared agent sees only the acting user's records
+        rows = [
+            r for r in rows
+            if r.profile_snapshot.get("delegating_user_id") == acting_user
+        ]
     return ok(request, [_invocation_view(r) for r in rows])
 
 
@@ -1011,12 +1060,17 @@ def get_invocation(
     auth: AuthContext = Depends(require_permission("invocations.read")),
     session: Session = Depends(get_session),
 ):
+    acting_user = _agent_invocation_scope(request, auth, session)
     row = session.get(InvocationRow, invocation_id)
     if (
         row is None
         or row.workspace_id != auth.workspace_id
         or row.principal_id != auth.principal_id
     ):
+        raise ApiError(ErrorCode.NOT_FOUND, "Invocation not found")
+    if acting_user is not None and row.profile_snapshot.get("delegating_user_id") != acting_user:
+        # SEC-050: another delegating user's record is indistinguishable
+        # from a missing one
         raise ApiError(ErrorCode.NOT_FOUND, "Invocation not found")
     return ok(request, _invocation_view(row, include_result=True))
 
@@ -1191,7 +1245,7 @@ def issue_delegation_context_route(
         workspace_id=auth.workspace_id,
         principal_id=auth.principal_id,
         delegation_id=delegation_id,
-        secret=request.app.state.settings.internal_token,
+        secret=request.app.state.settings.effective_delegation_key,
     )
     from datetime import UTC, datetime
 
