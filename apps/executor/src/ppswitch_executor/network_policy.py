@@ -106,10 +106,13 @@ def _resolve(host: str) -> list[str]:
     return sorted({str(info[4][0]) for info in infos})
 
 
-def check_outbound_target(
-    url: str, approved_hosts: list[str], *, resolver=_resolve
-) -> TargetCheck:
-    """Validate one outbound target; raise on any policy violation."""
+def check_url_policy(url: str, approved_hosts: list[str]) -> tuple[str, int]:
+    """URL-level policy (scheme / embedded credentials / host whitelist).
+
+    No DNS involved. Used directly in GATEWAY mode, where the isolated
+    executor cannot resolve external names - the egress gateway owns
+    resolution and IP policy for delegated traffic.
+    """
     split = urlsplit(url)
     if split.scheme not in ("http", "https"):
         raise ApiError(ErrorCode.UPSTREAM_FAILURE, "Target scheme not allowed")
@@ -132,6 +135,14 @@ def check_outbound_target(
             "Target host is not in the approved endpoint host list",
             {"host": host, "reason": "host_not_approved"},
         )
+    return host, port
+
+
+def check_outbound_target(
+    url: str, approved_hosts: list[str], *, resolver=_resolve
+) -> TargetCheck:
+    """Validate one outbound target; raise on any policy violation."""
+    host, port = check_url_policy(url, approved_hosts)
 
     resolved = resolver(host)
     if not resolved:

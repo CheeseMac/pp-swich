@@ -146,9 +146,17 @@ class HttpAdapter:
     def execute(self, plan: InvocationPlan, credential: CredentialMaterial) -> Any:
         url = self._build_url(plan)
         # PR-SEC-03: validate the FINAL url (arguments substituted), not just
-        # the template - a hostile argument cannot redirect the request
+        # the template - a hostile argument cannot redirect the request.
+        # GATEWAY MODE: the isolated executor cannot resolve external names;
+        # the URL-level policy runs here and the egress gateway independently
+        # owns resolution + IP policy for delegated traffic.
         if self._network_checker is not None:
-            self._network_checker(url, plan.approved_hosts)
+            from ppswitch_executor.network_policy import check_url_policy
+
+            if self._egress_proxy_url:
+                check_url_policy(url, plan.approved_hosts)
+            else:
+                self._network_checker(url, plan.approved_hosts)
 
         headers: dict[str, str] = {}
         if credential.auth_scheme == AuthScheme.API_KEY:
