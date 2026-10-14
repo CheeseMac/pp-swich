@@ -248,7 +248,7 @@ except httpx.HTTPError:
 PY
 # the gateway LOGGED the policy denial (not a random network failure)
 docker compose logs egress-gateway 2>&1 | grep -q \
-  "classification=host_not_in_egress_allowlist" \
+  "classification=host not in egress allowlist" \
   || { echo "FAIL: no policy denial in gateway audit log"; exit 1; }
 echo "gateway audit log confirms policy denial"
 docker compose exec -T egress-gateway python - <<'PY'
