@@ -98,4 +98,15 @@ IPv6 `fd00:ec2::254` 都不在 link-local 段。修复：显式策略集
   `ci-egress-token-` 合成前缀）：全部通过
 - `docker compose config`：control 仅 internal、hardening 生效、
   PG override 四服务解析通过
-- CI docker-deploy job 以升级脚本首跑（结果随提交记录）
+- CI（`3543745`）：**五个 job 全绿**，docker-deploy 以升级脚本实跑
+  通过——非 demo 生产启动腿（三密钥强制 + dev 目录 404）、**完整
+  Agent 链**（发现导入→双人发布→合成凭证调用→网关→外部 HTTPS 后端
+  →响应守卫）、审计日志拒绝断言、动态可达性对照、全链 MOCKKEY
+  canary。
+
+CI 迭代记录（如实，六次提交到绿）：容器内播种 principals（镜像不含
+scripts/ 且只读根文件系统）、**网关模式下 executor 的 DNS 职责移交**
+（拆分 `check_url_policy`——无路由容器做不了外部解析，这是本轮迭代
+揪出的真架构修正）、探针认证（401 vs allowlist 拒绝的区分）、拒绝
+理由字符串对齐、heredoc 缩进、动态对照 IP（固定 IP 过时导致对照腿
+误报）。全部过程在提交历史中可溯。
