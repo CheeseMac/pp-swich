@@ -272,17 +272,23 @@ PY
 endgroup
 
 step "QA-DEP-04: reachability control, then direct-block"
-# control: the GATEWAY container CAN reach the target IP...
+# resolve the backend's CURRENT address from the gateway (no stale IPs)
+TARGET_IP="$(docker compose exec -T egress-gateway python -c \
+  "import socket; print(sorted({i[4][0] for i in socket.getaddrinfo('httpbin.org', 443, type=socket.SOCK_STREAM)})[0])")"
+echo "control target: $TARGET_IP"
+# control: the GATEWAY container CAN reach that IP...
 docker compose exec -T egress-gateway python -c \
-  "import socket; socket.setdefaulttimeout(5); socket.create_connection(('93.184.216.34', 443)); print('gateway reaches target: control OK')"
+  "import socket, sys; socket.setdefaulttimeout(8); socket.create_connection((sys.argv[1], 443)); print('gateway reaches target: control OK')" "$TARGET_IP"
 # ...while the EXECUTOR cannot reach it directly
-docker compose exec -T executor python - <<'PY'
+docker compose exec -T executor python - "$TARGET_IP" <<'PY'
 import socket
+import sys
 
-socket.setdefaulttimeout(5)
+target = sys.argv[1]
+socket.setdefaulttimeout(8)
 try:
-    socket.create_connection(("93.184.216.34", 443))
-    raise SystemExit("FAIL: executor reached the internet WITHOUT the gateway")
+    socket.create_connection((target, 443))
+    raise SystemExit(f"FAIL: executor reached {target} WITHOUT the gateway")
 except OSError:
     print("executor direct egress blocked: OK")
 PY
