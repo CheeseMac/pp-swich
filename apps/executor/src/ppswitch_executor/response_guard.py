@@ -142,6 +142,17 @@ def _normalized_schema(schema: Any) -> dict[str, Any] | None:
             for b in branches
         )
     ):
+        # review7 NET-13-F1: duplicate property names across branches are
+        # REFUSED, never merged by overwrite - a later branch must not be
+        # able to widen (or replace) an earlier branch's constraints.
+        # Full JSON-Schema intersection semantics are out of scope by
+        # design; disjoint unions are the only supported allOf shape.
+        seen: set[str] = set()
+        for branch in branches:
+            names = set(branch["properties"])
+            if names & seen:
+                return None
+            seen |= names
         merged: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
         for branch in branches:
             merged["properties"].update(branch["properties"])

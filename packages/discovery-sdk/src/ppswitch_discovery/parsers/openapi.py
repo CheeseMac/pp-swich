@@ -25,14 +25,32 @@ from ppswitch_discovery.parsers.har import CandidateOperation, DiscoveryImportRe
 _PATH_PARAM = re.compile(r"\{([^}]+)\}")
 _METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
-# PR-NET-13: bounded LOCAL $ref resolution. Rules:
+# PR-NET-13 + review7 NET-13-F2: bounded LOCAL $ref resolution. Rules:
 # - only "#/..." document-local pointers resolve; external/URL refs never
 #   dereference (no network, ever);
-# - resolution depth is capped and cycles abort (the operation falls to
-#   needs_review instead of looping);
-# - anything unresolvable marks the candidate needs_review rather than
-#   silently storing a broken contract.
-_MAX_REF_DEPTH = 8
+# - a $ref object carrying SIBLING keywords is refused (its validation
+#   semantics would be silently dropped by plain inlining);
+# - cycles abort via the resolution stack (which doubles as the REF-CHAIN
+#   depth cap); STRUCTURE depth, total node count, array length and the
+#   resolved payload size each have independent budgets;
+# - anything over budget or unresolvable marks the candidate needs_review
+#   rather than silently storing a broken (or inflated) contract.
+_MAX_REF_CHAIN = 8        # $ref hops in one resolution path
+_MAX_STRUCTURE_DEPTH = 64  # plain JSON nesting (dict/list), no refs needed
+_MAX_NODES = 20_000        # total visited nodes per resolution
+_MAX_ARRAY = 256           # array length accepted while resolving
+_MAX_RESOLVED_BYTES = 512 * 1024  # serialized size of a resolved subtree
+
+
+class _Budget:
+    """Mutable counters shared across one resolution pass."""
+
+    def __init__(self) -> None:
+        self.nodes = 0
+
+    def spend(self) -> bool:
+        self.nodes += 1
+        return self.nodes <= _MAX_NODES
 
 
 def _json_pointer(root: Any, pointer: str) -> Any:
@@ -48,37 +66,68 @@ def _json_pointer(root: Any, pointer: str) -> Any:
     return node
 
 
-def resolve_local_refs(node: Any, root: Any, stack: frozenset, depth: int = 0):
-    """Resolve local ``$ref`` nodes in-place-safe. Returns (resolved, ok)."""
-    if depth > _MAX_REF_DEPTH:
+def resolve_local_refs(
+    node: Any,
+    root: Any,
+    stack: frozenset,
+    depth: int = 0,
+    budget: _Budget | None = None,
+):
+    """Resolve local ``$ref`` nodes. Returns (resolved, ok); ok=False means
+    over budget / unresolvable - the caller must route to needs_review."""
+    budget = budget if budget is not None else _Budget()
+    if not budget.spend():
+        return None, False
+    if depth > _MAX_STRUCTURE_DEPTH:
         return None, False
     if isinstance(node, dict):
-        ref = node.get("$ref")
-        if isinstance(ref, str):
+        if "$ref" in node:
+            if set(node) != {"$ref"} or not isinstance(node["$ref"], str):
+                # NET-13-F2: sibling keywords beside $ref would be dropped
+                # by inlining - refuse instead of silently weakening
+                return None, False
+            ref = node["$ref"]
             if not ref.startswith("#/"):
                 return None, False  # external reference: never dereferenced
             if ref in stack:
                 return None, False  # cycle
+            if len(stack) + 1 > _MAX_REF_CHAIN:
+                return None, False
             target = _json_pointer(root, ref[2:])
             if target is None:
                 return None, False
-            return resolve_local_refs(target, root, stack | {ref}, depth + 1)
+            return resolve_local_refs(
+                target, root, stack | {ref}, depth + 1, budget
+            )
         out: dict[str, Any] = {}
         for key, value in node.items():
-            resolved, ok = resolve_local_refs(value, root, stack, depth)
+            resolved, ok = resolve_local_refs(value, root, stack, depth + 1, budget)
             if not ok:
                 return None, False
             out[key] = resolved
         return out, True
     if isinstance(node, list):
+        if len(node) > _MAX_ARRAY:
+            return None, False
         resolved_items: list[Any] = []
         for item in node:
-            resolved, ok = resolve_local_refs(item, root, stack, depth)
+            resolved, ok = resolve_local_refs(item, root, stack, depth + 1, budget)
             if not ok:
                 return None, False
             resolved_items.append(resolved)
         return resolved_items, True
     return node, True
+
+
+def _resolved_within_size(resolved: Any) -> bool:
+    """NET-13-F2: a resolved subtree must stay within the size budget -
+    repeated inlining of one huge schema must not inflate storage."""
+    import json as _json
+
+    try:
+        return len(_json.dumps(resolved, default=str)) <= _MAX_RESOLVED_BYTES
+    except (TypeError, ValueError):
+        return False
 
 # annotation keys that may carry real credential-shaped values; never stored
 _STRIPPED_ANNOTATIONS = frozenset(
@@ -194,6 +243,8 @@ def build_candidates_from_openapi(document: dict[str, Any]) -> DiscoveryImportRe
             # goes to needs_review - never a silently broken schema
             resolved, refs_ok = resolve_local_refs(operation, document, frozenset())
             resolved = resolved if isinstance(resolved, dict) else {}
+            if refs_ok and not _resolved_within_size(resolved):
+                refs_ok = False  # inflated inline payload: needs_review
             params = resolved.get("parameters") or []
             path_params = _PATH_PARAM.findall(template)
             query_keys = sorted(

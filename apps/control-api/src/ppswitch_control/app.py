@@ -55,6 +55,11 @@ def _validate_production_settings(settings: ControlSettings) -> None:
         ) from exc
 
 
+def create_app_from_env():
+    """Zero-arg ASGI factory for `uvicorn --factory` deployments."""
+    return create_app()
+
+
 def create_app(
     settings: ControlSettings | None = None,
     *,

@@ -6,7 +6,7 @@
 >
 > 通用 API 发现、连接切换、凭证保护与 Agent 安全能力平台。
 
-**项目状态：Pre-alpha —— 六轮评审加固 + PR-DATA-12/PR-NET-13 完成（2026-10-14）**  
+**项目状态：Pre-alpha —— 七轮评审加固，PR-DATA-12/NET-13/DEP-14 完成，待 PR-QA-06 与生产就绪综合审计（2026-10-14）**  
 **本仓库启动文档版本：v0.1.0，2026-10-13**  
 **品牌名称：`pp switch`；仓库 / 包名称：`pp-switch`。**
 
@@ -32,6 +32,7 @@
 - 安全加固第四轮 v0.1.3.1（复审后）：幂等回放前重验完整 scope 链与 connection 存活（授权缩小/撤销后缓存不可再取）、Agent 历史查询强制委托票据并按委托用户过滤（撤销即刻生效）、输出 Schema 根节点 $ref 一律拒绝、委托票据生产强制独立签名密钥（ADR-005 修订/ADR-007）（对应回归测试 SEC-049…051 与撤销不变量四路径）
 - 数据生命周期 PR-DATA-12（第五轮批准后）：调用结果存储前数据分级（high/critical 默认 metadata-only）、保留期 TTL（过期读取为空）、Fernet 静态加密（生产强制密钥）、启动自动清理 + admin 清理 API；历史读取按记录重校验完整授权链（缩小未撤销同样不可读，SEC-052）；委托授权代际 generation 使撤销→重授权后的旧票据立即失效（SEC-053）；allOf/oneOf/anyOf 组合 schema 在受限解析器落地前一律 fail-closed（ADR-008：结果读取单一出口）
 - 生产就绪与受限解析（第六轮）：升级时清空存量明文结果（迁移 f3a62c8e1b47 + 运行时无期限明文兜底清扫）、结果清理按 Workspace 隔离（全局清扫仅限内部启动任务）且启动失败告警、Fernet 密钥轮换读写窗口（MultiFernet）+ 租户内重加密 API + 解密失败日志分类（DATA-15..17）；OpenAPI 本地 $ref 有界解析（外部引用不解引用、循环/深度上限、失败进人工审核）与响应守卫 allOf 纯对象分支受限合并（PR-NET-13，ADR-009）
+- 出口强制与部署（第七轮 PR-DEP-14）：allOf 重复属性一律拒绝、解析器四类资源预算（结构深度/节点数/数组长度/内联体积）与 $ref 兄弟键拒绝（NET-13-F1/F2）；IPv6 包装地址（IPv4-mapped/NAT64）按内嵌 IPv4 判定实现元数据段硬拒；三层出口隔离（应用层策略 + Compose executor 无出口网络 + 主机防火墙样例）、密钥轮换分页重加密与多实例运维规程、升级不可逆与备份加密说明（deploy/ + docs/28）
 
 **计划中、尚未实现（请勿当作已有能力）：**
 
@@ -65,7 +66,7 @@ uv run python scripts/seed-demo.py
 #    -> Invocations 调用并观察数据集随档案切换
 ```
 
-测试：`uv run pytest`（226 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）；检查：`uv run ruff check . && uv run mypy packages apps`。
+测试：`uv run pytest`（237 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）；检查：`uv run ruff check . && uv run mypy packages apps`。
 
 ## 解决什么问题
 
@@ -130,6 +131,8 @@ uv run python scripts/seed-demo.py
 | **第四轮复审回复与撤销不变量补丁** | **[24-REVIEW-RESPONSE-4](docs/24-REVIEW-RESPONSE-4.md)** |
 | **第五轮复审回复与 PR-DATA-12 记录** | **[25-REVIEW-RESPONSE-5](docs/25-REVIEW-RESPONSE-5.md)** |
 | **第六轮复审回复与 PR-NET-13 记录** | **[26-REVIEW-RESPONSE-6](docs/26-REVIEW-RESPONSE-6.md)** |
+| **第七轮复审回复与 PR-DEP-14 记录** | **[27-REVIEW-RESPONSE-7](docs/27-REVIEW-RESPONSE-7.md)** |
+| **部署与出口强制控制** | **[28-DEPLOYMENT-AND-EGRESS](docs/28-DEPLOYMENT-AND-EGRESS.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 

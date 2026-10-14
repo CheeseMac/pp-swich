@@ -111,22 +111,36 @@ def reencrypt_results(session, settings, workspace_id=None) -> dict[str, int]:
         settings.result_encryption_key,
         previous_keys=[k for k in settings.result_previous_keys.split(",") if k],
     )
-    statement = select(InvocationRow).where(
+    base = select(InvocationRow).where(
         InvocationRow.result_encrypted.is_not(None)
     )
     if workspace_id is not None:
-        statement = statement.where(InvocationRow.workspace_id == workspace_id)
+        base = base.where(InvocationRow.workspace_id == workspace_id)
     rekeyed = failed = 0
-    for row in session.scalars(statement).all():
-        payload = vault.decrypt(row.result_encrypted or "")
-        if payload is None:
-            failed += 1
-            logger.warning(
-                "result_reencrypt_failed invocation_id=%s classification=decrypt_error",
-                row.id,
-            )
-            continue
-        row.result_encrypted = vault.encrypt(payload)
-        rekeyed += 1
-    session.commit()
+    # review7: keyset-paginated with per-batch commits so large histories
+    # rotate incrementally (checkpointed) instead of one long transaction
+    batch_size = 500
+    last_id = None
+    while True:
+        statement = base.order_by(InvocationRow.id).limit(batch_size)
+        if last_id is not None:
+            statement = base.where(InvocationRow.id > last_id).order_by(
+                InvocationRow.id
+            ).limit(batch_size)
+        batch = session.scalars(statement).all()
+        if not batch:
+            break
+        for row in batch:
+            payload = vault.decrypt(row.result_encrypted or "")
+            if payload is None:
+                failed += 1
+                logger.warning(
+                    "result_reencrypt_failed invocation_id=%s classification=decrypt_error",
+                    row.id,
+                )
+                continue  # operator decides about unreadable payloads
+            row.result_encrypted = vault.encrypt(payload)
+            rekeyed += 1
+        last_id = batch[-1].id
+        session.commit()
     return {"rekeyed": rekeyed, "failed": failed}

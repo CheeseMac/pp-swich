@@ -56,6 +56,26 @@ def _soft_denied(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
+# review7 PR-DEP-14 (application layer): IPv6 addresses can EMBED IPv4
+# targets; policy must judge the embedded address, not the wrapper.
+# - IPv4-mapped (::ffff:a.b.c.d): ipaddress already flags most ranges, we
+#   normalize explicitly so every check judges plain IPv4;
+# - NAT64 (64:ff9b::/96): the embedded IPv4 governs - without this, a
+#   resolver answer like 64:ff9b::a9fe:a9fe would sail past the
+#   link-local deny that catches 169.254.169.254.
+_NAT64_NET = ipaddress.ip_network("64:ff9b::/96")
+
+
+def canonical_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address):
+    """Normalize v6 wrappers to the IPv4 address they carry."""
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return mapped
+    if isinstance(ip, ipaddress.IPv6Address) and ip in _NAT64_NET:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
+
+
 def _resolve(host: str) -> list[str]:
     try:
         infos = socket.getaddrinfo(host, None)
@@ -96,7 +116,7 @@ def check_outbound_target(
         raise ApiError(ErrorCode.UPSTREAM_FAILURE, "Target host cannot be resolved")
     for ip_text in resolved:
         try:
-            ip = ipaddress.ip_address(ip_text)
+            ip = canonical_ip(ipaddress.ip_address(ip_text))
         except ValueError as exc:
             raise ApiError(
                 ErrorCode.UPSTREAM_FAILURE, "Target resolved to invalid address"
