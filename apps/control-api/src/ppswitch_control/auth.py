@@ -132,6 +132,7 @@ ACTION_MIN_ROLE: dict[str, int] = {
                              # approvers arrive with RBAC deepening)
     "agent_grants.write": 2,    # granting is an admin action
     "audit.read": 2,            # workspace-wide audit trail: admins only
+    "results.purge": 2,         # PR-DATA-12: retention destruction is admin
 }
 
 # what an agent principal may do at all (review2 P0-1: agents discover

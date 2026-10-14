@@ -986,7 +986,7 @@ def create_invocation(
 
 def _agent_invocation_scope(
     request: Request, auth: AuthContext, session: Session
-) -> str | None:
+):
     """SEC-050: agents read history ONLY under a delegation context.
 
     A shared agent's credential alone must not enumerate other users'
@@ -994,7 +994,7 @@ def _agent_invocation_scope(
     Context header) and history is filtered to that delegating user.
     A ticket proves issuance, NOT continued validity - the underlying
     delegation must still be active (revocation is checked live).
-    Returns the acting user id, or None for non-agent principals.
+    Returns the live DelegationRow, or None for non-agent principals.
     """
     if auth.principal.kind != "agent":
         return None
@@ -1023,7 +1023,70 @@ def _agent_invocation_scope(
             ErrorCode.FORBIDDEN,
             "Delegation context no longer corresponds to an active delegation",
         )
-    return str(payload["user_id"])
+    # SEC-053: ticket generation must equal the CURRENT delegation
+    # generation - re-delegation after revocation invalidates old tickets
+    if (delegation.generation or 1) != payload.get("gen"):
+        raise ApiError(
+            ErrorCode.FORBIDDEN,
+            "Delegation context belongs to a previous authorization generation",
+        )
+    return delegation
+
+
+def _history_record_authorized(session: Session, agent_principal_id, delegation, row) -> bool:
+    """SEC-052: every history record is re-authorized BEFORE it is served.
+
+    The CURRENT grant (scopes + expiry), the CURRENT delegation scopes,
+    the recorded connection's liveness and scopes, and the capability
+    version's required_scopes must all still allow the data - a narrowed
+    or revoked authorization can never be re-read through history.
+    """
+    from ppswitch_core.errors import ApiError as _ApiError
+    from ppswitch_db.models import AgentGrantRow, CapabilityVersionRow, ConnectionRow
+
+    from ppswitch_control.services.invocation_service import (
+        _authorize_scope_chain,
+        _epoch,
+        epoch_now,
+    )
+
+    version = session.get(CapabilityVersionRow, row.capability_version_id)
+    if version is None:
+        return False
+    recorded_connection_id = row.profile_snapshot.get("connection_id")
+    connection = (
+        session.get(ConnectionRow, UUID(recorded_connection_id))
+        if recorded_connection_id else None
+    )
+    if connection is None or connection.status != "active":
+        return False
+    now = epoch_now()
+    active_grants = [
+        g for g in session.scalars(
+            select(AgentGrantRow).where(
+                AgentGrantRow.workspace_id == row.workspace_id,
+                AgentGrantRow.agent_principal_id == agent_principal_id,
+                AgentGrantRow.capability_id == version.capability_id,
+            )
+        ).all()
+        if g.expires_at is None or _epoch(g.expires_at) >= now
+    ]
+    if not active_grants:
+        return False
+    grant_scopes = (
+        None if any(not (g.scopes or []) for g in active_grants)
+        else sorted({s for g in active_grants for s in (g.scopes or [])})
+    )
+    try:
+        _authorize_scope_chain(
+            grant_scopes=grant_scopes,
+            connection_scopes=connection.scopes or None,
+            delegation_scopes=delegation.scopes or None,
+            required_scopes=list(version.required_scopes or []),
+        )
+    except _ApiError:
+        return False
+    return True
 
 
 @router.get("/invocations")
@@ -1033,7 +1096,7 @@ def list_invocations(
     auth: AuthContext = Depends(require_permission("invocations.read")),
     session: Session = Depends(get_session),
 ):
-    acting_user = _agent_invocation_scope(request, auth, session)
+    scope_delegation = _agent_invocation_scope(request, auth, session)
     rows = session.scalars(
         select(InvocationRow)
         .where(
@@ -1044,13 +1107,21 @@ def list_invocations(
         .order_by(InvocationRow.created_at.desc())
         .limit(min(limit, 200))
     ).all()
-    if acting_user is not None:
-        # SEC-050: a shared agent sees only the acting user's records
+    if scope_delegation is not None:
+        # SEC-050: a shared agent sees only the acting user's records;
+        # SEC-052: each record is re-authorized against the CURRENT grant,
+        # delegation scopes, connection and required_scopes
         rows = [
             r for r in rows
-            if r.profile_snapshot.get("delegating_user_id") == acting_user
+            if r.profile_snapshot.get("delegating_user_id")
+            == str(scope_delegation.user_principal_id)
+            and _history_record_authorized(
+                session, auth.principal_id, scope_delegation, r
+            )
         ]
-    return ok(request, [_invocation_view(r) for r in rows])
+    return ok(request, [
+        _invocation_view(r, settings=request.app.state.settings) for r in rows
+    ])
 
 
 @router.get("/invocations/{invocation_id}")
@@ -1060,7 +1131,7 @@ def get_invocation(
     auth: AuthContext = Depends(require_permission("invocations.read")),
     session: Session = Depends(get_session),
 ):
-    acting_user = _agent_invocation_scope(request, auth, session)
+    scope_delegation = _agent_invocation_scope(request, auth, session)
     row = session.get(InvocationRow, invocation_id)
     if (
         row is None
@@ -1068,23 +1139,40 @@ def get_invocation(
         or row.principal_id != auth.principal_id
     ):
         raise ApiError(ErrorCode.NOT_FOUND, "Invocation not found")
-    if acting_user is not None and row.profile_snapshot.get("delegating_user_id") != acting_user:
+    if scope_delegation is not None:
         # SEC-050: another delegating user's record is indistinguishable
-        # from a missing one
-        raise ApiError(ErrorCode.NOT_FOUND, "Invocation not found")
-    return ok(request, _invocation_view(row, include_result=True))
+        # from a missing one; SEC-052: records no longer authorized by the
+        # current chain are equally invisible
+        if row.profile_snapshot.get("delegating_user_id") != str(
+            scope_delegation.user_principal_id
+        ) or not _history_record_authorized(
+            session, auth.principal_id, scope_delegation, row
+        ):
+            raise ApiError(ErrorCode.NOT_FOUND, "Invocation not found")
+    return ok(
+        request,
+        _invocation_view(row, include_result=True, settings=request.app.state.settings),
+    )
 
 
-def _invocation_view(row: InvocationRow, *, include_result: bool = False) -> dict:
+def _invocation_view(
+    row: InvocationRow, *, include_result: bool = False, settings=None
+) -> dict:
     view = {
         "id": str(row.id),
         "capability": f"{row.capability_name}:{row.capability_version}",
         "status": row.status,
         "profile_label": row.profile_snapshot.get("profile_label"),
         "created_at": str(row.created_at),
+        # PR-DATA-12: the classification decided at storage time
+        "data_class": row.profile_snapshot.get("data_class", "normal"),
     }
     if include_result:
-        view["result"] = row.result
+        from ppswitch_control.services.result_read import stored_result
+
+        view["result"] = (
+            stored_result(row, settings) if settings is not None else row.result
+        )
         view["error_code"] = row.error_code
     return view
 
@@ -1275,6 +1363,32 @@ def revoke_delegation_route(
         delegation_id=delegation_id,
     )
     return ok(request, {"id": str(delegation.id), "status": delegation.status})
+
+
+# ---------------------------------------------------------------------------
+# result lifecycle admin (PR-DATA-12)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/admin/purge-results")
+def purge_results(
+    request: Request,
+    auth: AuthContext = Depends(require_permission("results.purge")),
+    session: Session = Depends(get_session),
+):
+    """Destroy result payloads past their retention deadline (metadata
+    survives). Runs automatically at startup; exposed for scheduled jobs."""
+    from ppswitch_control.services.result_read import purge_expired_results
+
+    purged = purge_expired_results(session)
+    session.add(
+        AuditEventRow(
+            workspace_id=auth.workspace_id, actor_id=auth.principal_id,
+            action="results.purge", decision="allowed",
+            redacted_metadata={"rows": purged},
+        )
+    )
+    return ok(request, {"purged": purged})
 
 
 # ---------------------------------------------------------------------------

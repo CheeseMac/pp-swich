@@ -262,6 +262,7 @@ class TestSEC029InvocationResultOwnership:
 
 class TestSEC030DemoProductionIsolation:
     def test_dev_directory_disabled_and_startup_guard(self, demo, tmp_path) -> None:
+        from cryptography.fernet import Fernet
         from fastapi.testclient import TestClient
         from ppswitch_control.app import create_app
         from ppswitch_control.settings import ControlSettings
@@ -278,6 +279,7 @@ class TestSEC030DemoProductionIsolation:
 
         # review4: outside demo mode the delegation ticket key must be
         # dedicated - missing, or equal to the internal token, both refuse
+        # (review5 adds: result encryption key mandatory as well)
         with pytest.raises(RuntimeError):
             create_app(ControlSettings(
                 db_url=demo.harness.db_url, demo_mode=False,
@@ -292,10 +294,18 @@ class TestSEC030DemoProductionIsolation:
 
         # with a strong token AND a dedicated ticket key the apps start,
         # but dev surfaces stay off
+        with pytest.raises(RuntimeError):
+            create_app(ControlSettings(
+                db_url=demo.harness.db_url, demo_mode=False,
+                internal_token="ci-strong-token-9f21ab",
+                delegation_signing_key="ci-ticket-key-2c81dd", auto_migrate=False,
+            ))  # review5: no result encryption key -> refuse
         control_app = create_app(ControlSettings(
             db_url=demo.harness.db_url, demo_mode=False,
             internal_token="ci-strong-token-9f21ab",
-            delegation_signing_key="ci-ticket-key-2c81dd", auto_migrate=False,
+            delegation_signing_key="ci-ticket-key-2c81dd",
+            result_encryption_key=Fernet.generate_key().decode(),
+            auto_migrate=False,
         ))
         client = TestClient(control_app)
         assert client.get("/api/v1/dev/principals").status_code == 404

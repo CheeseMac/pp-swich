@@ -47,6 +47,17 @@ class ControlSettings(BaseModel):
     # internal_token for local/demo use and fails production validation
     delegation_signing_key: str = os.environ.get("PP_SWITCH_DELEGATION_SIGNING_KEY", "")
 
+    # PR-DATA-12 (review5): result retention and at-rest encryption
+    result_retention_days: int = int(
+        os.environ.get("PP_SWITCH_RESULT_RETENTION_DAYS", "7")
+    )
+    # high/critical risk results are metadata-only unless opted in
+    store_high_risk_results: bool = os.environ.get(
+        "PP_SWITCH_STORE_HIGH_RISK_RESULTS", "false"
+    ).lower() in ("1", "true", "yes")
+    # Fernet key (urlsafe base64 of 32 bytes); empty = plaintext column
+    result_encryption_key: str = os.environ.get("PP_SWITCH_RESULT_ENCRYPTION_KEY", "")
+
     @property
     def effective_delegation_key(self) -> str:
         return self.delegation_signing_key or self.internal_token

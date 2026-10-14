@@ -406,6 +406,10 @@ class DelegationRow(Base):
     agent_principal_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
     # optional narrowing: delegation scopes intersect grant + connection scopes
     scopes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # review5 SEC-053: monotonic authorization generation - bumped on every
+    # revoke / re-delegate / scope change. Delegation context tickets embed
+    # the generation at issuance and are invalid once it moves.
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(16), default="active")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -442,6 +446,13 @@ class InvocationRow(Base):
     policy_version: Mapped[str] = mapped_column(String(128), nullable=False, default="policy-v1")
     status: Mapped[str] = mapped_column(String(24), default="pending")
     result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # PR-DATA-12: results are stored encrypted-at-rest when a key is
+    # configured (result stays NULL then); both columns honor the
+    # retention deadline below and are purged by the cleanup job
+    result_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True

@@ -36,6 +36,23 @@ def _validate_production_settings(settings: ControlSettings) -> None:
             "signing key: set PP_SWITCH_DELEGATION_SIGNING_KEY (must differ from "
             "PP_SWITCH_INTERNAL_TOKEN) - review4 ADR-005."
         )
+    # review5 PR-DATA-12: invocation results are encrypted at rest in
+    # production - a valid Fernet key is mandatory outside demo mode
+    if not settings.result_encryption_key:
+        raise RuntimeError(
+            "Refusing to start outside demo mode without result encryption: set "
+            "PP_SWITCH_RESULT_ENCRYPTION_KEY (Fernet key, `cryptography.fernet."
+            "Fernet.generate_key()`) - review5 PR-DATA-12."
+        )
+    try:
+        from cryptography.fernet import Fernet
+
+        Fernet(settings.result_encryption_key.encode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            "PP_SWITCH_RESULT_ENCRYPTION_KEY is not a valid Fernet key "
+            "(review5 PR-DATA-12)"
+        ) from exc
 
 
 def create_app(
@@ -71,6 +88,15 @@ def create_app(
     app.state.settings = settings
     app.state.session_factory = session_factory
     app.state.engine = engine
+    # PR-DATA-12: expired result payloads are wiped at every startup (the
+    # admin endpoint covers scheduled runs between restarts)
+    import contextlib
+
+    with contextlib.suppress(Exception):  # never block boot on housekeeping
+        from ppswitch_control.services.result_read import purge_expired_results
+
+        with session_factory() as session:
+            purge_expired_results(session)
     # internal control->executor channel never uses ambient system proxies
     app.state.executor_client = executor_client or httpx.Client(
         follow_redirects=False, timeout=30.0, trust_env=False

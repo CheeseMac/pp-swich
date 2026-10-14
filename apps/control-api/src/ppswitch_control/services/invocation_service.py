@@ -258,6 +258,18 @@ def invoke_capability(
             )
             wanted = UUID(payload["user_id"])
             matched = [d for d in delegations if d.user_principal_id == wanted]
+            # SEC-053: the ticket must belong to the CURRENT generation -
+            # a revoke -> re-delegate cycle bumps the generation and kills
+            # outstanding tickets even inside their validity window
+            if (
+                len(matched) == 1
+                and (matched[0].generation or 1) != payload.get("gen")
+            ):
+                raise ApiError(
+                    ErrorCode.FORBIDDEN,
+                    "Delegation context belongs to a previous authorization "
+                    "generation",
+                )
             if len(matched) != 1:
                 _audit(
                     session, workspace_id, principal_id, "invocation.deny", "denied",
@@ -359,10 +371,12 @@ def invoke_capability(
                     ErrorCode.FORBIDDEN,
                     "Cached result is no longer authorized by the current scope chain",
                 ) from exc
+            from ppswitch_control.services.result_read import stored_result
+
             return {
                 "invocation_id": str(existing.id),
                 "status": existing.status,
-                "result": existing.result,
+                "result": stored_result(existing, settings),
                 "profile_label": existing.profile_snapshot.get("profile_label"),
                 "idempotent_replay": True,
             }
@@ -612,7 +626,35 @@ def invoke_capability(
         body = {}
     if response.status_code == 200 and body:
         invocation.status = InvocationStatus.SUCCEEDED.value
-        invocation.result = body.get("result")
+        # PR-DATA-12: classify BEFORE storage; restricted results are
+        # metadata-only unless opted in, stored results carry a retention
+        # deadline and are encrypted at rest when a key is configured
+        from ppswitch_control.result_vault import ResultVault, classify_result
+
+        result_payload = body.get("result")
+        data_class = classify_result(version_row.risk_level)
+        invocation.profile_snapshot = {
+            **invocation.profile_snapshot, "data_class": data_class,
+        }
+        keep = (
+            data_class == "normal" or settings.store_high_risk_results
+        ) and settings.result_retention_days > 0
+        if keep and isinstance(result_payload, dict):
+            vault = ResultVault(settings.result_encryption_key)
+            if vault.encrypts:
+                invocation.result_encrypted = vault.encrypt(result_payload)
+                invocation.result = None
+            else:
+                invocation.result = result_payload
+            from datetime import timedelta
+
+            from ppswitch_db.models import utcnow
+
+            invocation.result_expires_at = utcnow() + timedelta(
+                days=settings.result_retention_days
+            )
+        else:
+            invocation.result = None  # metadata-only: nothing persists
     else:
         error = body.get("error", {})
         invocation.status = InvocationStatus.FAILED.value
@@ -645,7 +687,9 @@ def invoke_capability(
     return {
         "invocation_id": str(invocation.id),
         "status": invocation.status,
-        "result": invocation.result,
+        # the caller receives the guarded result ONCE in this response;
+        # whether anything persists is the storage policy's business
+        "result": result_payload if isinstance(result_payload, dict) else None,
         "profile_label": profile.name,
         "idempotent_replay": False,
     }

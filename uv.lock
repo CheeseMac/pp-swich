@@ -961,6 +961,7 @@ name = "ppswitch-control"
 version = "0.1.0"
 source = { editable = "apps/control-api" }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "ppswitch-core" },
@@ -975,6 +976,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "ppswitch-core", editable = "packages/core" },

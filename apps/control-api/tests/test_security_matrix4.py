@@ -13,7 +13,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from .conftest import AGENT_TOKEN, ALICE_TOKEN, CAROL_TOKEN, Demo, auth
+from .conftest import AGENT_TOKEN, ALICE_TOKEN, Demo, auth
 
 DAVE_TOKEN = "dev-token-dave-5c1a"
 
@@ -44,88 +44,6 @@ def _issue_ticket(control, token, agent_id):
     return delegation["id"], ticket.json()["data"]["context"]
 
 
-@pytest.fixture()
-def scoped_shared(harness, demo):
-    """Shared agent setup where the capability REQUIRES orders.read.
-
-    Alice delegates orders.read; dave is a second delegating user used to
-    prove history isolation. The agent's grant is unscoped.
-    """
-    from ppswitch_control.auth import hash_token
-    from ppswitch_db.models import PrincipalRow
-
-    with harness.session_factory() as session:
-        alice = (
-            session.query(PrincipalRow)
-            .filter_by(token_hash=hash_token(ALICE_TOKEN))
-            .one()
-        )
-        if (
-            session.query(PrincipalRow)
-            .filter_by(token_hash=hash_token(DAVE_TOKEN))
-            .one_or_none()
-            is None
-        ):
-            session.add(
-                PrincipalRow(
-                    id=uuid.uuid4(), workspace_id=alice.workspace_id, kind="user",
-                    display_name="Dave (member)", token_hash=hash_token(DAVE_TOKEN),
-                    token_hint=DAVE_TOKEN[:14] + "...", role="member",
-                )
-            )
-            session.commit()
-
-    control = harness.control
-    ids = demo.ids
-    agent_id = _agent_id(demo)
-
-    # a scoped capability: required_scopes = ["orders.read"]
-    created = control.post(
-        "/api/v1/capabilities",
-        json={
-            "name": "crm.orders_probe",
-            "display_name": "orders probe",
-            "operation_id": ids["get_operation_id"],
-            "risk_level": "low",
-            "required_scopes": ["orders.read"],
-        },
-        headers=auth(ALICE_TOKEN),
-    )
-    assert created.status_code == 201, created.text
-    cap_id = created.json()["data"]["id"]
-    for action in ("review", "verify"):
-        assert control.post(
-            f"/api/v1/capabilities/{cap_id}/{action}",
-            json={"evidence": "scope"}, headers=auth(CAROL_TOKEN),
-        ).status_code == 200
-    assert control.post(
-        f"/api/v1/capabilities/{cap_id}/publish",
-        json={"version": "1.0.0"}, headers=auth(CAROL_TOKEN),
-    ).status_code == 200
-
-    assert control.post(
-        "/api/v1/agent-grants",
-        json={"agent_principal_id": agent_id, "capability_id": cap_id},
-        headers=auth(ALICE_TOKEN),
-    ).status_code == 201
-
-    # alice delegates WITH orders.read and binds her profile
-    assert control.post(
-        "/api/v1/delegations",
-        json={"agent_principal_id": agent_id, "scopes": ["orders.read"]},
-        headers=auth(ALICE_TOKEN),
-    ).status_code == 201
-    assert control.put(
-        f"/api/v1/active-bindings/{ids['service_id']}/agent:{agent_id}",
-        json={"profile_id": ids["profile_A"], "expected_version": 0},
-        headers=auth(ALICE_TOKEN),
-    ).status_code == 200
-
-    _, alice_ticket = _issue_ticket(control, ALICE_TOKEN, agent_id)
-    return {
-        "control": control, "ids": ids, "agent_id": agent_id,
-        "capability": "crm.orders_probe", "alice_ticket": alice_ticket,
-    }
 
 
 class TestSEC049ReplayRespectsScopeNarrowing:

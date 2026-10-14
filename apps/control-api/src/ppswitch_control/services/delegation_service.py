@@ -100,10 +100,13 @@ def create_delegation(
         )
     ).one_or_none()
     if existing is not None:
-        # reactivate in place: the (user, agent) pair keeps exactly one row
+        # reactivate in place: the (user, agent) pair keeps exactly one row.
+        # SEC-053: ANY change of state or scopes starts a NEW generation -
+        # tickets issued for the previous generation die with the bump.
         existing.status = "active"
         existing.scopes = scopes
         existing.expires_at = expires_at
+        existing.generation = (existing.generation or 1) + 1
         delegation = existing
     else:
         delegation = DelegationRow(
@@ -139,6 +142,9 @@ def revoke_delegation(
     if delegation.user_principal_id != principal_id:
         raise ApiError(ErrorCode.FORBIDDEN, "Only the delegating user may revoke")
     delegation.status = "revoked"
+    # SEC-053: revocation is a generation change; old-generation tickets
+    # must not survive a revoke -> re-delegate cycle
+    delegation.generation = (delegation.generation or 1) + 1
     session.flush()
     session.add(
         AuditEventRow(
@@ -197,6 +203,9 @@ def issue_delegation_context(
         "user_id": str(delegation.user_principal_id),
         "agent_id": str(delegation.agent_principal_id),
         "scopes": delegation.scopes or [],
+        # SEC-053: the authorization generation this ticket was minted in;
+        # a bumped database generation invalidates the ticket
+        "gen": delegation.generation or 1,
         "exp": expires,
         "nonce": uuid.uuid4().hex,
     }

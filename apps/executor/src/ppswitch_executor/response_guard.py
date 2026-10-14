@@ -112,10 +112,15 @@ def _project(value: Any, schema: dict[str, Any], dropped: _Dropped, depth: int =
     if not isinstance(schema, dict):
         schema = {}
 
-    # SEC-048: an unresolved reference is not an interpretable schema -
-    # no value (object, array or scalar) may pass through it
-    if "$ref" in schema:
-        dropped.add("<unresolved_ref>")
+    # SEC-048 + review5 PR-NET-13: an unresolved reference or an
+    # uninterpreted composition keyword is not an interpretable schema -
+    # no value (object, array or scalar) may pass through it. Composition
+    # support arrives with PR-NET-13's bounded resolver; until then these
+    # schemas fail closed.
+    if "$ref" in schema or any(
+        keyword in schema for keyword in ("allOf", "oneOf", "anyOf", "not")
+    ):
+        dropped.add("<uninterpretable_schema>")
         return None
 
     expected = schema.get("type")
@@ -160,9 +165,11 @@ def _project(value: Any, schema: dict[str, Any], dropped: _Dropped, depth: int =
         # An items schema that is an unresolved reference (``$ref``) or that
         # declares neither ``type`` nor ``properties`` is equally unusable.
         raw_items = schema.get("items")
-        usable = isinstance(raw_items, dict) and (
-            "$ref" not in raw_items
-            and (raw_items.get("type") is not None or raw_items.get("properties"))
+        usable = isinstance(raw_items, dict) and not any(
+            keyword in raw_items
+            for keyword in ("$ref", "allOf", "oneOf", "anyOf", "not")
+        ) and (
+            raw_items.get("type") is not None or raw_items.get("properties")
         )
         if not usable:
             dropped.add("<items_unspecified>")
@@ -194,15 +201,20 @@ def project_response(
     schema: dict[str, Any] = dict(output_schema or {})
     schema_properties = schema.get("properties")
 
-    # SEC-051 (review4): a reviewed schema that is itself an unresolved
-    # reference declares nothing projectable - refuse BEFORE any fallback
-    # path could run, so a root "$ref" can never reach the lenient
+    # SEC-051 (review4) + review5 PR-NET-13: a reviewed schema that is
+    # itself an unresolved reference or an uninterpreted composition
+    # declares nothing projectable - refuse BEFORE any fallback path could
+    # run, so a root "$ref"/"oneOf"/... can never reach the lenient
     # allow_fields+scrub compatibility branch
-    if schema and "$ref" in schema:
+    if schema and any(
+        keyword in schema
+        for keyword in ("$ref", "allOf", "oneOf", "anyOf", "not")
+    ):
         raise ApiError(
             ErrorCode.UPSTREAM_FAILURE,
-            "Capability output schema is an unresolved reference; refusing to project",
-            {"reason": "root_schema_unresolved_ref"},
+            "Capability output schema is not interpretable "
+            "(unresolved reference or composition); refusing to project",
+            {"reason": "root_schema_not_interpretable"},
         )
 
     if isinstance(schema_properties, dict) and schema_properties:
