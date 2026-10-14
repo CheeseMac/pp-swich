@@ -238,8 +238,9 @@ docker compose exec -T executor python - <<'PY' || true
 import httpx
 
 import os
-    authed = "http://workload:" + os.environ["EGRESS_PROXY_TOKEN"] + "@egress-gateway:8914"
-    client = httpx.Client(proxy=authed, timeout=8.0, trust_env=False)
+
+authed = "http://workload:" + os.environ["EGRESS_PROXY_TOKEN"] + "@egress-gateway:8914"
+client = httpx.Client(proxy=authed, timeout=8.0, trust_env=False)
 try:
     client.get("https://example.com/status/200")
     raise SystemExit("FAIL: unapproved host reachable")
