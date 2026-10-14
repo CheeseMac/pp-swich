@@ -112,10 +112,13 @@ def harness(tmp_path: Path):
     control = TestClient(control_app)
     yield Harness(control=control, executor=executor, db_url=db_url,
                   session_factory=session_factory)
-    # PG matrix: per-test engines must release their pooled connections,
-    # otherwise the suite exhausts max_connections (hit after FEAT-01
-    # grew the suite past ~280 tests)
+    # PG matrix: BOTH per-test engines must release their pooled
+    # connections - the harness engine and the one create_app() built
+    # for the app itself - otherwise the suite exhausts the service
+    # container's max_connections (hit after FEAT-01 grew the suite
+    # past ~280 tests)
     engine.dispose()
+    control_app.state.engine.dispose()
 
 
 def auth(token: str) -> dict:
