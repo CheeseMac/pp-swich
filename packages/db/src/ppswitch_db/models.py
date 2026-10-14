@@ -485,6 +485,57 @@ class ApprovalRow(Base):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class CollectorPairingRow(Base):
+    """FEAT-01 browser-collector pairing: console issues a one-time code,
+    the extension exchanges it for a short-lived token that can ONLY
+    submit sanitized observations for one service.
+
+    The collector is deliberately NOT a principal: it has no row in
+    ``principals``, cannot pass the permission matrix and never sees any
+    user/management token. Codes are stored hashed, single-use and expire
+    within minutes; wrong-code attempts are capped before the pairing is
+    revoked (brute-force guard).
+    """
+
+    __tablename__ = "collector_pairings"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','paired','revoked','expired')", "status"
+        ),
+        ForeignKeyConstraint(
+            ["service_id", "workspace_id"], ["services.id", "services.workspace_id"]
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id"), nullable=False, index=True
+    )
+    service_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    # SHA-256 of the one-time pairing code shown in the console
+    pairing_code_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    # brute-force guard: exchange attempts with a wrong code
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # SHA-256 of the issued collector token (present once paired)
+    collector_token_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
+    collector_token_hint: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    pairing_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_submitted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    observation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
 class AuditEventRow(Base):
     __tablename__ = "audit_events"
 

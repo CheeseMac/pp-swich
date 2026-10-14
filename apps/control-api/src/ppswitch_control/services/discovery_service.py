@@ -15,6 +15,7 @@ from ppswitch_db.models import (
     OperationVersionRow,
     ServiceRow,
 )
+from ppswitch_discovery.parsers.collector import build_candidates_from_collector
 from ppswitch_discovery.parsers.har import build_candidates_from_har
 from ppswitch_discovery.parsers.openapi import build_candidates_from_openapi
 from sqlalchemy import select
@@ -56,6 +57,8 @@ def import_discovery_document(
         result = build_candidates_from_har(document)
     elif source_type == "openapi":
         result = build_candidates_from_openapi(document)
+    elif source_type == "collector":
+        result = build_candidates_from_collector(document)
     else:
         raise ApiError(ErrorCode.BAD_REQUEST, "Unsupported source_type")
 
@@ -130,7 +133,13 @@ def import_discovery_document(
                     "sample_count": candidate.sample_count,
                     "status_codes": candidate.status_codes,
                 },
-                redaction_version="har-sanitizer/1",
+                redaction_version=(
+                    # FEAT-01: extension already strips values; server
+                    # re-sanitized the zero-value skeletons
+                    "collector-skeleton/1"
+                    if source_type == "collector"
+                    else "har-sanitizer/1"
+                ),
             )
         )
         observations += 1

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>pp switch API Collector</title>
+    <link rel="stylesheet" href="/src/popup/popup.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <span class="logo">pp</span>
+        <span>API Collector</span>
+      </div>
+      <span id="pairing-badge" class="badge">未连接</span>
+    </header>
+
+    <section class="card">
+      <h2>连接 pp switch</h2>
+      <label class="field">
+        <span>控制台地址</span>
+        <input id="server-url" type="url" placeholder="http://127.0.0.1:8911" />
+      </label>
+      <label class="field">
+        <span>配对码（控制台 Discovery 页生成）</span>
+        <input id="pairing-code" type="text" placeholder="ABCDEFGH" maxlength="16" autocomplete="off" />
+      </label>
+      <div class="row">
+        <button id="btn-pair" class="primary">连接</button>
+        <button id="btn-unpair" class="ghost" hidden>断开</button>
+      </div>
+      <p id="pairing-detail" class="muted"></p>
+    </section>
+
+    <section class="card">
+      <h2>采集</h2>
+      <p class="muted">只采集你明确附加调试的标签页。Chrome 会在该标签页顶部显示“正在调试”横幅。</p>
+      <div class="row">
+        <button id="btn-start" class="primary">开始采集当前标签页</button>
+        <button id="btn-stop" class="ghost" hidden>停止采集</button>
+      </div>
+      <p id="capture-status" class="status"></p>
+      <div id="detached-warning" class="warning" hidden>
+        调试会话已断开（标签页关闭或你取消了调试横幅）。已采集的观察已保留，可重新附加或直接提交。
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>候选 API <span id="candidate-count" class="count"></span></h2>
+      <div id="candidate-list" class="candidates"><p class="muted">还没有观察。</p></div>
+      <div class="row">
+        <button id="btn-submit" class="primary">提交到 pp switch</button>
+        <button id="btn-clear" class="ghost">清空</button>
+      </div>
+      <p id="submit-status" class="muted"></p>
+    </section>
+
+    <footer>
+      <p>隐私：只上传方法、路径模板、参数名和字段类型结构。不采集值、Cookie、Authorization 头或登录会话。采集结果只生成草稿，审核发布在控制台完成。</p>
+    </footer>
+
+    <script type="module" src="./src/popup/popup.ts"></script>
+  </body>
+</html>

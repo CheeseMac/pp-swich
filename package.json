@@ -4,8 +4,9 @@
   "version": "0.1.0",
   "description": "pp switch monorepo root (Node tooling for web-console)",
   "scripts": {
-    "build": "pnpm --filter web-console build",
-    "typecheck": "pnpm --filter web-console typecheck",
+    "build": "pnpm --filter web-console build && pnpm --filter browser-extension build",
+    "typecheck": "pnpm --filter web-console typecheck && pnpm --filter browser-extension typecheck",
+    "test": "pnpm --filter browser-extension test",
     "dev": "pnpm --filter web-console dev"
   }
 }

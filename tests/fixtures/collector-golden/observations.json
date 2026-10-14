@@ -1,0 +1,107 @@
+[
+  {
+    "url": "https://crm.example.test/api/customers/search",
+    "method": "POST",
+    "status": 200,
+    "query": {
+      "page": "",
+      "limit": ""
+    },
+    "request_body": {
+      "q": "",
+      "limit": 0,
+      "filters": {
+        "region": ""
+      }
+    },
+    "response_body": {
+      "results": [
+        {
+          "id": "",
+          "total": 0.5
+        }
+      ]
+    },
+    "graphql_operation": null,
+    "observed_at": 0
+  },
+  {
+    "url": "https://crm.example.test/graphql",
+    "method": "POST",
+    "status": 200,
+    "query": {},
+    "request_body": {
+      "operationName": "",
+      "query": ""
+    },
+    "response_body": {
+      "data": {
+        "customer": {
+          "id": "",
+          "tier": ""
+        }
+      }
+    },
+    "graphql_operation": "getCustomer",
+    "observed_at": 0
+  },
+  {
+    "url": "https://crm.example.test/api/customers/{id}",
+    "method": "GET",
+    "status": 200,
+    "query": {
+      "verbose": ""
+    },
+    "request_body": null,
+    "response_body": {
+      "id": "",
+      "display_name": "",
+      "vip": false,
+      "score": 0.5
+    },
+    "graphql_operation": null,
+    "observed_at": 0
+  },
+  {
+    "url": "https://crm.example.test/api/customers/{id}",
+    "method": "GET",
+    "status": 200,
+    "query": {
+      "verbose": ""
+    },
+    "request_body": null,
+    "response_body": {
+      "id": "",
+      "display_name": "",
+      "vip": false,
+      "score": 0.5
+    },
+    "graphql_operation": null,
+    "observed_at": 0
+  },
+  {
+    "url": "https://crm.example.test/api/customers/{uuid}",
+    "method": "GET",
+    "status": 200,
+    "query": {},
+    "request_body": null,
+    "response_body": {
+      "id": "",
+      "display_name": ""
+    },
+    "graphql_operation": null,
+    "observed_at": 0
+  },
+  {
+    "url": "https://crm.example.test/api/orders/{id}",
+    "method": "DELETE",
+    "status": 404,
+    "query": {},
+    "request_body": null,
+    "response_body": {
+      "error": ""
+    },
+    "graphql_operation": null,
+    "observed_at": 0
+  }
+]

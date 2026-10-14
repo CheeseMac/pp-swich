@@ -104,3 +104,30 @@ export interface ImportSummary {
   operations_updated: number;
   observations_created: number;
 }
+
+export interface CollectorPairing {
+  id: string;
+  service_id: string;
+  status: string;
+  created_at: string | null;
+  pairing_expires_at: string;
+  token_expires_at: string | null;
+  last_submitted_at: string | null;
+  observation_count: number;
+  attempts: number;
+  pairing_code?: string; // present only in the create response
+}
+
+export interface CollectorObservation {
+  id: string;
+  service_id: string;
+  source: string;
+  normalized_shape: {
+    method?: string;
+    template?: string;
+    query_keys?: string[];
+    sample_count?: number;
+    status_codes?: number[];
+  };
+  created_at: string | null;
+}

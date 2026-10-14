@@ -55,6 +55,7 @@ def test_empty_database_migration_and_rerun(tmp_path: Path) -> None:
         "operation_versions", "capabilities", "capability_versions",
         "connections", "profiles", "active_bindings", "invocations",
         "audit_events", "principals", "agent_grants", "approvals",
+        "delegations", "collector_pairings",
     ):
         assert expected in tables
 

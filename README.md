@@ -68,7 +68,7 @@ uv run python scripts/seed-demo.py
 #    -> Invocations 调用并观察数据集随档案切换
 ```
 
-测试：`uv run pytest`（255 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）；检查：`uv run ruff check . && uv run mypy packages apps`。
+测试：`uv run pytest`（279 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）+ `pnpm test`（浏览器扩展 25 项 vitest）；检查：`uv run ruff check . && uv run mypy packages apps`。
 
 ## 解决什么问题
 
@@ -138,6 +138,7 @@ uv run python scripts/seed-demo.py
 | **第八轮复审回复与 PR-QA-06 记录** | **[29-REVIEW-RESPONSE-8](docs/29-REVIEW-RESPONSE-8.md)** |
 | **生产就绪 Gate R1 进度** | **[30-GATE-R1-PROGRESS](docs/30-GATE-R1-PROGRESS.md)** |
 | **交接文档（状态/任务/坑/红线）** | **[31-HANDOVER](docs/31-HANDOVER.md)** |
+| **FEAT-01 浏览器 API Collector 交付记录** | **[32-FEAT-01-COLLECTOR](docs/32-FEAT-01-COLLECTOR.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 
@@ -145,7 +146,7 @@ uv run python scripts/seed-demo.py
 
 - **Backend**：Python 3.12+、FastAPI、Pydantic v2、SQLAlchemy 2、Alembic、httpx。
 - **Web UI**：TypeScript、React、Vite。
-- **Discovery browser extension**：TypeScript、Chrome Manifest V3；先做 HAR 导入，再做授权采集。
+- **Discovery browser extension**：TypeScript、Chrome Manifest V3；**已交付 FEAT-01**（docs/32）——chrome.debugger 授权采集 Fetch/XHR，零值样本脱敏（值不出浏览器），一次性配对码换取受限 collector token，上传仅生成草稿。
 - **Storage**：SQLite 用于单机开发和 demo；PostgreSQL 为团队/企业正式部署基线。
 - **Secrets**：可插拔 `SecretProvider`；单机 OS Keyring / 企业 OpenBao 或托管 KMS。控制平面不能获取明文。
 - **Agent**：官方 MCP Python SDK（v2 系列）实现 MCP Adapter，HTTP 统一调用保持为内部稳定契约。

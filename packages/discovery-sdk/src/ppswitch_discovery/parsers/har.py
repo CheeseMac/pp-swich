@@ -4,46 +4,31 @@ The caller is expected to have pre-sanitized the file locally (docs/07
 section 4). This parser sanitizes again - defense in depth - and reports any
 position that still carries a raw credential value so the importer can
 reject the upload.
+
+The sanitize -> normalize -> dedupe -> infer pipeline itself lives in
+``parsers.merge`` and is shared with the browser collector (FEAT-01).
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlsplit
 
-from ppswitch_discovery.fingerprint import fingerprint_operation
-from ppswitch_discovery.normalizer import normalize_path
-from ppswitch_discovery.sanitizer import sanitize_observation
-from ppswitch_discovery.schema_inference import infer_json_schema
+from ppswitch_discovery.parsers.merge import (
+    CandidateOperation,  # re-export: openapi.py and tests import it from here
+    DiscoveryImportResult,
+    merge_raw_shapes,
+)
 
 MAX_BODY_BYTES = 512 * 1024
 
-
-@dataclass
-class CandidateOperation:
-    """Deduplicated candidate API operation produced by discovery."""
-
-    method: str
-    template: str
-    fingerprint: str
-    query_keys: list[str] = field(default_factory=list)
-    path_params: list[str] = field(default_factory=list)
-    input_schema: dict[str, Any] = field(default_factory=dict)
-    output_schema: dict[str, Any] = field(default_factory=dict)
-    sample_count: int = 0
-    status_codes: list[int] = field(default_factory=list)
-    needs_review: bool = False
-    source: str = "har"
-
-
-@dataclass
-class DiscoveryImportResult:
-    candidates: list[CandidateOperation] = field(default_factory=list)
-    unsanitized_fields: list[str] = field(default_factory=list)
-    entry_count: int = 0
-    skipped_entries: int = 0
+__all__ = [
+    "MAX_BODY_BYTES",
+    "CandidateOperation",
+    "DiscoveryImportResult",
+    "build_candidates_from_har",
+]
 
 
 def _headers_to_dict(headers: list[dict[str, Any]] | None) -> dict[str, str]:
@@ -134,87 +119,15 @@ def _extract_raw_shape(entry: dict[str, Any]) -> dict[str, Any] | None:
 
 def build_candidates_from_har(document: dict[str, Any]) -> DiscoveryImportResult:
     """Turn a HAR document into deduplicated candidate operations."""
-    result = DiscoveryImportResult()
     log = document.get("log")
     entries = log.get("entries") if isinstance(log, dict) else None
     if not isinstance(entries, list):
-        return result
+        return DiscoveryImportResult()
 
-    groups: dict[str, dict[str, Any]] = {}
+    shapes: list[dict[str, Any] | None] = []
     for entry in entries:
         if not isinstance(entry, dict):
+            shapes.append(None)
             continue
-        result.entry_count += 1
-        raw = _extract_raw_shape(entry)
-        if raw is None:
-            result.skipped_entries += 1
-            continue
-
-        report = sanitize_observation(raw)
-        if report.unsanitized_fields:
-            result.unsanitized_fields.extend(report.unsanitized_fields)
-            continue  # never keep unsanitized entries, not even partially
-
-        request = report.sanitized["request"]
-        response = report.sanitized["response"]
-        normalized = normalize_path(
-            request["method"], request["path"],
-            graphql_operation=raw.get("_graphql_operation"),
-        )
-        query_keys = sorted(request.get("query", {}).keys())
-        fp = fingerprint_operation(request["method"], normalized.template, query_keys)
-
-        group = groups.setdefault(
-            fp,
-            {
-                "method": request["method"],
-                "template": normalized.template,
-                "query_keys": query_keys,
-                "path_params": normalized.param_names,
-                "query_samples": [],
-                "body_samples": [],
-                "response_samples": [],
-                "status_codes": set(),
-                "count": 0,
-                "conflict": False,
-            },
-        )
-        group["count"] += 1
-        group["status_codes"].add(int(response["status"]))
-        if request.get("query"):
-            group["query_samples"].append(request["query"])
-        body = request.get("body")
-        if isinstance(body, dict) and "__root__" not in body:
-            group["body_samples"].append(body)
-        if response.get("body") is not None:
-            group["response_samples"].append(response["body"])
-        if normalized.type_conflict:
-            group["conflict"] = True
-
-    for fp, group in groups.items():
-        query_schema = infer_json_schema(group["query_samples"]) if group["query_samples"] else {}
-        body_schema = infer_json_schema(group["body_samples"]) if group["body_samples"] else {}
-        output_schema = (
-            infer_json_schema(group["response_samples"]) if group["response_samples"] else {}
-        )
-        needs_review = group["conflict"] or bool(
-            output_schema.get("x-type-conflict")
-            or query_schema.get("x-type-conflict")
-            or body_schema.get("x-type-conflict")
-        )
-        result.candidates.append(
-            CandidateOperation(
-                method=group["method"],
-                template=group["template"],
-                fingerprint=fp,
-                query_keys=group["query_keys"],
-                path_params=group["path_params"],
-                input_schema={"query": query_schema, "body": body_schema},
-                output_schema=output_schema,
-                sample_count=group["count"],
-                status_codes=sorted(group["status_codes"]),
-                needs_review=needs_review,
-                source="har",
-            )
-        )
-    return result
+        shapes.append(_extract_raw_shape(entry))
+    return merge_raw_shapes(shapes, source="har")

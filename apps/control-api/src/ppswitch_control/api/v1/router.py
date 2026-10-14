@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
 
@@ -22,9 +23,11 @@ from ppswitch_db.models import (
     AuditEventRow,
     CapabilityRow,
     CapabilityVersionRow,
+    CollectorPairingRow,
     ConnectionRow,
     EndpointRow,
     InvocationRow,
+    ObservationRow,
     OperationRow,
     OperationVersionRow,
     PrincipalRow,
@@ -38,6 +41,7 @@ from sqlalchemy.orm import Session
 
 from ppswitch_control.auth import (
     AuthContext,
+    _extract_bearer,
     get_session,
     require_permission,
 )
@@ -47,6 +51,13 @@ from ppswitch_control.services.capability_service import (
     publish_capability,
     review_capability,
     verify_capability,
+)
+from ppswitch_control.services.collector_service import (
+    create_pairing,
+    exchange_pairing_code,
+    list_pairings,
+    submit_observations,
+    verify_collector_token,
 )
 from ppswitch_control.services.connection_service import (
     activate_binding,
@@ -196,6 +207,16 @@ class DelegationCreate(BaseModel):
     agent_principal_id: UUID
     scopes: list[str] = Field(default_factory=list)
     expires_at: str | None = None  # ISO-8601; None = no expiry
+
+
+class CollectorPairRequest(BaseModel):
+    pairing_code: str = Field(min_length=6, max_length=16)
+
+
+class CollectorObservations(BaseModel):
+    """FEAT-01: zero-value observation skeletons from the extension."""
+
+    observations: list[dict] = Field(min_length=1, max_length=1000)
 
 
 # ---------------------------------------------------------------------------
@@ -449,9 +470,129 @@ async def import_discovery(
     )
 
 
-@router.get("/operations")
-def list_operations(
+# ---------------------------------------------------------------------------
+# browser collector (FEAT-01): console issues one-time pairing codes, the
+# extension exchanges them for a scoped short-lived token, and can then
+# submit sanitized zero-value observations - drafts only, never published
+# ---------------------------------------------------------------------------
+
+
+def require_collector(
+    request: Request, session: Session = Depends(get_session)
+) -> CollectorPairingRow:
+    """Authenticate the extension with its OWN token (never a user token)."""
+    token = _extract_bearer(request)
+    return verify_collector_token(session, token=token, now=datetime.now(UTC))
+
+
+@router.post("/services/{service_id}/collector/pairings")
+def create_collector_pairing(
+    service_id: UUID,
     request: Request,
+    auth: AuthContext = Depends(require_permission("discovery.import")),
+    session: Session = Depends(get_session),
+):
+    settings = request.app.state.settings
+    view, _code = create_pairing(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        service_id=service_id,
+        now=datetime.now(UTC),
+        pairing_ttl_seconds=settings.collector_pairing_ttl_seconds,
+        token_ttl_seconds=settings.collector_token_ttl_seconds,
+    )
+    return ok(request, view, 201)
+
+
+@router.get("/services/{service_id}/collector/pairings")
+def list_collector_pairings(
+    service_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("operations.read")),
+    session: Session = Depends(get_session),
+):
+    pairings = list_pairings(session, workspace_id=auth.workspace_id, service_id=service_id)
+    return ok(request, pairings)
+
+
+@router.post("/collector/pair")
+def pair_collector(
+    payload: CollectorPairRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """Exchange a one-time console pairing code for a collector token."""
+    settings = request.app.state.settings
+    result = exchange_pairing_code(
+        session,
+        pairing_code=payload.pairing_code,
+        now=datetime.now(UTC),
+        token_ttl_seconds=settings.collector_token_ttl_seconds,
+    )
+    return ok(request, result)
+
+
+@router.post("/collector/observations")
+def submit_collector_observations(
+    payload: CollectorObservations,
+    request: Request,
+    pairing: CollectorPairingRow = Depends(require_collector),
+    session: Session = Depends(get_session),
+):
+    settings = request.app.state.settings
+    summary = submit_observations(
+        session,
+        pairing=pairing,
+        document=payload.model_dump(),
+        max_observations=settings.collector_max_observations,
+        now=datetime.now(UTC),
+    )
+    return ok(
+        request,
+        {
+            "job_id": summary.import_id,
+            "state": "completed",
+            "candidates": summary.candidates,
+            "operations_created": summary.operations_created,
+            "operations_updated": summary.operations_updated,
+            "observations_created": summary.observations_created,
+        },
+        201,
+    )
+
+
+@router.get("/observations")
+def list_observations(
+    request: Request,
+    service_id: UUID | None = None,
+    auth: AuthContext = Depends(require_permission("operations.read")),
+    session: Session = Depends(get_session),
+):
+    """Recent discovery observations (source breakdown for the console)."""
+    stmt = select(ObservationRow).where(ObservationRow.workspace_id == auth.workspace_id)
+    if service_id:
+        stmt = stmt.where(ObservationRow.service_id == service_id)
+    rows = session.scalars(
+        stmt.order_by(ObservationRow.created_at.desc()).limit(50)
+    ).all()
+    return ok(
+        request,
+        [
+            {
+                "id": str(r.id),
+                "service_id": str(r.service_id),
+                "source": r.source,
+                "normalized_shape": r.normalized_shape,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    )
+
+
+@router.get("/operations")
+def list_operations(    request: Request,
     service_id: UUID | None = None,
     status: str | None = None,
     auth: AuthContext = Depends(require_permission("operations.read")),

@@ -63,6 +63,18 @@ class ControlSettings(BaseModel):
         "PP_SWITCH_RESULT_ENCRYPTION_PREVIOUS_KEYS", ""
     )
 
+    # FEAT-01 browser collector: one-time pairing code lifetime, issued
+    # collector token lifetime and per-batch observation cap
+    collector_pairing_ttl_seconds: int = int(
+        os.environ.get("PP_SWITCH_COLLECTOR_PAIRING_TTL", "600")
+    )
+    collector_token_ttl_seconds: int = int(
+        os.environ.get("PP_SWITCH_COLLECTOR_TOKEN_TTL", "28800")
+    )
+    collector_max_observations: int = int(
+        os.environ.get("PP_SWITCH_COLLECTOR_MAX_OBSERVATIONS", "200")
+    )
+
     @property
     def effective_delegation_key(self) -> str:
         return self.delegation_signing_key or self.internal_token

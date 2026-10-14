@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from ppswitch_discovery.fingerprint import fingerprint_operation
-from ppswitch_discovery.parsers.har import CandidateOperation, DiscoveryImportResult
+from ppswitch_discovery.parsers.merge import CandidateOperation, DiscoveryImportResult
 
 _PATH_PARAM = re.compile(r"\{([^}]+)\}")
 _METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}

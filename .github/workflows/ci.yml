@@ -34,7 +34,7 @@ jobs:
         run: uv run pytest
 
   frontend:
-    name: web-console typecheck / build
+    name: web-console + browser-extension typecheck / build / test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,6 +53,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Unit tests (browser-extension)
+        run: pnpm test
 
       - name: Build
         run: pnpm build
