@@ -67,9 +67,17 @@ class Harness:
     session_factory: object
 
 
+def _test_db_url(tmp_path: Path) -> str:
+    """PR-QA-06: the suite runs on SQLite by default and on PostgreSQL in
+    the CI matrix by setting PP_SWITCH_TEST_DB_URL (QA-PG-*)."""
+    import os
+
+    return os.environ.get("PP_SWITCH_TEST_DB_URL") or f"sqlite:///{tmp_path / 'control-test.db'}"
+
+
 @pytest.fixture()
 def harness(tmp_path: Path) -> Harness:
-    db_url = f"sqlite:///{tmp_path / 'control-test.db'}"
+    db_url = _test_db_url(tmp_path)
     run_upgrade(db_url)
 
     engine = create_engine_for_url(db_url)

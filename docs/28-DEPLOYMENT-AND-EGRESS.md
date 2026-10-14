@@ -9,8 +9,8 @@
 | 层 | 机制 | 失效时的兜底 |
 | --- | --- | --- |
 | 应用层（代码） | `approved_hosts` 显式白名单（无隐式放行）、连接层 IP 钉扎（解析-校验-连接同一字面量 IP）、link-local/元数据段不可豁免硬拒、IPv6 包装归一化（IPv4-mapped 与 NAT64 `64:ff9b::/96` 内嵌地址按其 IPv4 判定）、`trust_env=False`（无视代理环境变量）、重定向永不跟随 | —— 第一道 |
-| 编排层（Compose） | executor 仅加入 `internal: true` 网络：**容器级无出口路由**，即使应用层被完全绕过也无法触达外网；control 双宿（internal + egress） | 应用层 |
-| 主机层（防火墙） | 出口白名单只放行已批准目标（下附 iptables/nftables 样例）；应用层 `approved_hosts` 与主机层清单同源维护 | 编排层 |
+| 编排层（Compose） | executor 仅加入 `internal: true` 网络：**容器级无出口路由**；业务出站全部经 **egress-gateway**（CONNECT-only 受控出口，独立 allowlist + IP 归一化 + 硬拒元数据段 + 审计日志），隔离与可用性同时成立（review8 DEP-14-F1） | 应用层 |
+| 主机层（防火墙） | 出口白名单只放行已批准目标——**规则必须挂在 FORWARD 路径**（Docker 容器流量不走出站主机的 OUTPUT 链，见 §1.3 的 DOCKER-USER 样例） | 编排层 |
 
 `deploy/docker-compose.yml` 是第一版可执行方案：`docker compose up`
 即得到上述拓扑；`deploy/.env.example` 列出全部必需密钥（缺失时非
@@ -18,20 +18,55 @@ demo 模式拒绝启动）。
 
 ### 主机层样例（Linux）
 
+**正确路径（review8 DEP-14-F2 修正）**：Docker bridge 容器的出站流量
+经宿主机 **FORWARD** 路径（而非本地 OUTPUT 链）。iptables 后端用
+`DOCKER-USER` 链；nftables 挂 `forward` hook：
+
 ```bash
-# executor 容器（由 cgroup/docker 隔离网段 172.20.0.0/16 表示）仅允许
-# DNS(53/udp 到内网解析器) 与 internal 网段内的 control；其余出站 DROP。
-# 真实目标白名单按 approved_hosts 清单逐条追加。
+# iptables 后端（Docker 官方支持的用户链）：
+#   只放行 egress-gateway 容器（标记或源网段）去往已批准目标，
+#   internal 网段容器（executor/control）的出站一律 DROP。
+iptables -I DOCKER-USER -s 172.20.0.0/16 -d 172.20.0.0/16 -j ACCEPT
+iptables -I DOCKER-USER -s 172.20.0.0/16 -p udp --dport 53 -j ACCEPT
+#   逐条放行已批准目标（与 egress allowlist 同源维护）：
+iptables -I DOCKER-USER -s 172.20.0.0/16 -d <approved-ip/cidr> -p tcp --dport 443 -j ACCEPT
+iptables -A DOCKER-USER -s 172.20.0.0/16 -j DROP
+#   IPv6 同理（ip6tables DOCKER-USER）；验证时必须覆盖：
+#   容器重启后地址漂移（建议按 Docker 网段而非单 IP 立规则）、
+#   DNAT/SNAT 的影响、以及 executor 直连出站确被 DROP。
+
+# nftables 后端等价（forward hook，不是 output）：
 nft add table inet egress
-nft add chain inet egress out { type filter hook output priority 0 \; policy accept \; }
-nft add rule inet egress out ip saddr 172.20.0.0/16 udp dport 53 accept
-nft add rule inet egress out ip saddr 172.20.0.0/16 ip daddr 172.20.0.0/16 accept
-nft add rule inet egress out ip saddr 172.20.0.0/16 drop
+nft add chain inet egress fwd { type filter hook forward priority 0 \; policy accept \; }
+nft add rule inet egress fwd ip saddr 172.20.0.0/16 ip daddr 172.20.0.0/16 accept
+nft add rule inet egress fwd ip saddr 172.20.0.0/16 udp dport 53 accept
+nft add rule inet egress fwd ip saddr 172.20.0.0/16 drop
 ```
 
-iptables 等价物与 Windows/单机边界：本机开发（dev-up.py）不承载真实
-凭证，应用层策略即为全部防线；Windows 主机部署需在宿主防火墙为
-executor 进程配置等价出站规则（文档化承诺，样例随企业试点补充）。
+以上样例需在真实主机上实测后才可作为生产依据（QA-DEP-04 的一部分）。
+Windows/单机边界：本机开发（dev-up.py）不承载真实凭证，应用层 +
+egress-gateway 即为全部防线；Windows 主机部署需为 executor 进程配置
+等价出站规则（文档化承诺，样例随企业试点补充）。
+
+### 1.4 egress-gateway：受控业务出口（review8 DEP-14-F1）
+
+executor 保持无路由隔离后，**所有**真实 API 通信经 `egress-gateway`
+（`apps/egress-gateway`，端口 8914）：
+
+- CONNECT-only 正向代理：只隧道 HTTPS；明文 HTTP 转发一律 403（与
+  endpoint 默认 https-only 闭环）；
+- **独立 allowlist**（`EGRESS_ALLOWED_HOSTS` 或
+  `EGRESS_ALLOWED_HOSTS_FILE`），由运维与 endpoints 的
+  `approved_hosts` 同步维护——executor 应用层校验与网关校验是两道
+  独立信任根，互不替代；
+- 目标解析 IP 过 `canonical_ip`（v4-mapped/NAT64 归一），
+  link-local/元数据段即使被列入 allowlist 也硬拒；
+- 网关连接已验证的 IP 字面量（钉扎纪律与 executor 相同）；
+- TLS 端到端：网关只转发密文，**凭证仍只在 executor**，网关看不到；
+- 每次 allow/deny 均审计日志。
+
+executor 侧配置 `PP_SWITCH_EGRESS_PROXY=http://egress-gateway:8914`
+（compose 已默认注入）；不配置时保持直连 + 钉扎模式（本地开发）。
 
 ### 评审点名的验证面（应用层已锁定，回归测试看守）
 

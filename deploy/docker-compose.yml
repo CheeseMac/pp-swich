@@ -1,13 +1,12 @@
-# pp-switch 本地/单机部署（PR-DEP-14 第一版）
+# pp-switch 本地/单机部署（PR-DEP-14 + PR-QA-06 修订）
+
+# 出口模型（review8 DEP-14-F1 修订，详见 docs/28）：
+#   executor 在 internal（无路由）网络，业务出站全部经 egress-gateway
+#   （CONNECT-only 受控出口，独立 allowlist）——隔离与可用性同时成立。
 #
-# 出口隔离模型（三层，见 docs/28-DEPLOYMENT-AND-EGRESS.md）：
-#   1. 应用层：approved_hosts 白名单 + IP 钉扎 + v6 包装归一化（代码内）
-#   2. 编排层：executor 只加入 internal 网络 —— 无外网路由，即使应用层
-#      被绕过也无法出站；control 双宿（internal + 出口侧）
-#   3. 主机层：出口防火墙白名单（文档提供 iptables/nftables 样例）
-#
-# 环境变量：所有 PP_SWITCH_* 密钥经 .env 注入（deploy/.env.example），
-# 严禁写入镜像或 compose 文件。
+# 环境变量经 .env 注入（deploy/.env.example）；缺任一必需密钥拒绝启动。
+# 出口允许清单：EGRESS_ALLOWED_HOSTS 需与 endpoints 的 approved_hosts
+# 保持同步（运维责任，见 docs/28 §1.4）。
 
 name: pp-switch
 
@@ -19,14 +18,14 @@ services:
     command:
       ["uvicorn", "ppswitch_control.app:create_app_from_env", "--factory",
        "--host", "0.0.0.0", "--port", "8911"]
-    environment: &control_env
+    environment:
       PP_SWITCH_DB_URL: sqlite:////data/pp-switch.db
       PP_SWITCH_EXECUTOR_URL: http://executor:8912
       PP_SWITCH_INTERNAL_TOKEN: ${PP_SWITCH_INTERNAL_TOKEN:?set in .env}
       PP_SWITCH_DELEGATION_SIGNING_KEY: ${PP_SWITCH_DELEGATION_SIGNING_KEY:?set in .env}
       PP_SWITCH_RESULT_ENCRYPTION_KEY: ${PP_SWITCH_RESULT_ENCRYPTION_KEY:?set in .env}
       PP_SWITCH_DEMO_MODE: ${PP_SWITCH_DEMO_MODE:-false}
-      # 容器内不继承任何代理环境变量：出口只走应用层策略
+      # 容器内不继承任何代理环境变量
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       ALL_PROXY: ""
@@ -34,7 +33,8 @@ services:
     volumes:
       - control-data:/data
     networks: [internal, egress]
-    ports: ["8911:8911"]   # 控制台/运维访问；生产建议置于反代之后
+    # review8：默认仅绑定回环——企业暴露必须经显式反代配置
+    ports: ["127.0.0.1:8911:8911"]
     restart: unless-stopped
     depends_on: [executor]
 
@@ -48,16 +48,31 @@ services:
     environment:
       PP_SWITCH_INTERNAL_TOKEN: ${PP_SWITCH_INTERNAL_TOKEN:?set in .env}
       PP_SWITCH_DEMO_MODE: ${PP_SWITCH_DEMO_MODE:-false}
+      # DEP-14-F1：业务出站一律经受控网关（应用层校验仍先执行）
+      PP_SWITCH_EGRESS_PROXY: http://egress-gateway:8914
       HTTP_PROXY: ""
       HTTPS_PROXY: ""
       ALL_PROXY: ""
       NO_PROXY: "*"
     volumes:
       - executor-data:/data
-    networks: [internal]   # 关键：无 egress 网络 —— 容器级无出口路由
+    networks: [internal]   # 无 egress 路由：出站只能经网关
     restart: unless-stopped
 
-  mock-crm:                # 演示用；生产部署删除本服务
+  egress-gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: ["ppswitch-egress-gateway"]
+    environment:
+      EGRESS_ALLOWED_HOSTS: ${EGRESS_ALLOWED_HOSTS:-}
+      EGRESS_ALLOWED_HOSTS_FILE: /data/egress-allowlist.txt
+    volumes:
+      - egress-data:/data
+    networks: [internal, egress]  # 双宿：executor 侧入口 + 真实出口
+    restart: unless-stopped
+
+  mock-crm:                # 仅 demo profile：生产默认不启动模拟服务
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -66,13 +81,15 @@ services:
     environment:
       PP_SWITCH_DEMO_MODE: "true"
     networks: [internal]
+    profiles: [demo]
     restart: unless-stopped
 
 networks:
   internal:
     internal: true         # 完全无出站路由的隔离网
-  egress: {}               # 仅 control 加入；受主机出口防火墙约束
+  egress: {}               # egress-gateway 的真实出口侧；受主机防火墙约束
 
 volumes:
   control-data:
   executor-data:
+  egress-data:

@@ -52,6 +52,8 @@ ALLOWED_VALUE_PREFIXES = (
     "MOCKKEY-",
     "MOCK-",
     "dev-token-",
+    "ci-internal-token-",
+    "ci-ticket-key-",
     "dev-internal-token-synthetic",
     "CANARY_",
     "<REDACTED",

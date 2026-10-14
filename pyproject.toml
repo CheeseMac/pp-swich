@@ -25,6 +25,7 @@ members = [
     "apps/executor",
     "apps/mcp-adapter",
     "apps/demo-mock-crm",
+    "apps/egress-gateway",
 ]
 
 [tool.uv.sources]
@@ -69,6 +70,7 @@ testpaths = [
     "apps/executor/tests",
     "apps/mcp-adapter/tests",
     "apps/demo-mock-crm/tests",
+    "apps/egress-gateway/tests",
     "tests",
 ]
 addopts = "-q --import-mode=importlib"

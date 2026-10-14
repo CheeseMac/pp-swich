@@ -15,6 +15,7 @@ members = [
     "ppswitch-core",
     "ppswitch-db",
     "ppswitch-discovery",
+    "ppswitch-egress",
     "ppswitch-executor",
     "ppswitch-mcp",
     "ppswitch-mockcrm",
@@ -1028,6 +1029,21 @@ dependencies = [
 requires-dist = [
     { name = "ppswitch-core", editable = "packages/core" },
     { name = "pydantic", specifier = ">=2.9" },
+]
+
+[[package]]
+name = "ppswitch-egress"
+version = "0.1.0"
+source = { editable = "apps/egress-gateway" }
+dependencies = [
+    { name = "ppswitch-core" },
+    { name = "ppswitch-executor" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ppswitch-core", editable = "packages/core" },
+    { name = "ppswitch-executor", editable = "apps/executor" },
 ]
 
 [[package]]

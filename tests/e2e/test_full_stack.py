@@ -33,6 +33,8 @@ def auth(token: str) -> dict:
 
 @pytest.fixture(scope="module")
 def stack(tmp_path_factory, start_server_fixture):
+    import os
+
     from ppswitch_control.app import create_app
     from ppswitch_control.auth import hash_token
     from ppswitch_control.settings import ControlSettings
@@ -44,7 +46,7 @@ def stack(tmp_path_factory, start_server_fixture):
     from ppswitch_mockcrm import app as mockcrm_app
 
     db_dir = tmp_path_factory.mktemp("e2e")
-    db_url = f"sqlite:///{db_dir / 'e2e.db'}"
+    db_url = os.environ.get("PP_SWITCH_TEST_DB_URL") or f"sqlite:///{db_dir / 'e2e.db'}"
     run_upgrade(db_url)
     engine = create_engine_for_url(db_url)
     factory = create_session_factory(engine)

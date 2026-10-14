@@ -47,6 +47,12 @@ class ExecutorSettings(BaseModel):
         default_factory=lambda: os.environ.get("PP_SWITCH_DEMO_MODE", "false").lower()
         in ("1", "true", "yes")
     )
+    # review8 DEP-14-F1: when set, ALL upstream traffic flows through the
+    # controlled egress gateway (CONNECT-only forward proxy) instead of a
+    # direct pinning transport; application-layer policy still runs first
+    egress_proxy_url: str = Field(
+        default_factory=lambda: os.environ.get("PP_SWITCH_EGRESS_PROXY", "")
+    )
 
 
 class ExecuteRequest(BaseModel):
@@ -65,7 +71,10 @@ class ExecutorState:
         self.settings = settings or ExecutorSettings()
         self.provider: SecretProvider = MockSecretProvider()
         self.nonces = NonceStore()
-        self.http_adapter = HttpAdapter(network_checker=check_outbound_target)
+        self.http_adapter = HttpAdapter(
+            network_checker=check_outbound_target,
+            egress_proxy_url=self.settings.egress_proxy_url,
+        )
         self.mock_adapter = MockAdapter()
 
 

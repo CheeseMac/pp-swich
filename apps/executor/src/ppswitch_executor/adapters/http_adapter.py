@@ -78,13 +78,31 @@ class NetworkValidatingTransport(httpx.HTTPTransport):
 
 
 class HttpAdapter:
-    def __init__(self, client: httpx.Client | None = None, network_checker=None) -> None:
+    def __init__(
+        self,
+        client: httpx.Client | None = None,
+        network_checker=None,
+        egress_proxy_url: str = "",
+    ) -> None:
         self._client = client
         self._network_checker = network_checker
+        # review8 DEP-14-F1: isolated-executor deployments route upstream
+        # traffic through the controlled egress gateway; the application-
+        # layer policy (checker) still runs on every request first
+        self._egress_proxy_url = egress_proxy_url
 
     def _client_for(self, plan: InvocationPlan) -> httpx.Client:
         if self._client is not None:
             return self._client
+        if self._egress_proxy_url:
+            # gateway mode: the proxy transport handles the connection;
+            # the gateway independently validates the target (its own
+            # allowlist + IP canonicalization), and the checker above
+            # already enforced this endpoint's approved_hosts
+            return httpx.Client(
+                proxy=self._egress_proxy_url, follow_redirects=False,
+                timeout=REQUEST_TIMEOUT_S, trust_env=False,
+            )
         transport = NetworkValidatingTransport(
             plan.approved_hosts, self._network_checker
         )

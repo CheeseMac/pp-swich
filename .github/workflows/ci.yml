@@ -56,3 +56,44 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  postgresql:
+    name: PR-QA-06 postgres matrix
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ppswitch
+          POSTGRES_PASSWORD: ppswitch
+          POSTGRES_DB: ppswitch
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ppswitch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PP_SWITCH_TEST_DB_URL: postgresql+psycopg://ppswitch:ppswitch@localhost:5432/ppswitch
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      - name: Pytest on PostgreSQL (QA-PG-01..05)
+        run: uv run pytest packages/db/tests apps/control-api/tests tests/e2e -q
+
+  docker-deploy:
+    name: PR-QA-06 docker deploy matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run deployment verification (QA-DEP-01..05)
+        run: bash deploy/verify-deployment.sh
