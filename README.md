@@ -137,6 +137,7 @@ uv run python scripts/seed-demo.py
 | **部署与出口强制控制** | **[28-DEPLOYMENT-AND-EGRESS](docs/28-DEPLOYMENT-AND-EGRESS.md)** |
 | **第八轮复审回复与 PR-QA-06 记录** | **[29-REVIEW-RESPONSE-8](docs/29-REVIEW-RESPONSE-8.md)** |
 | **生产就绪 Gate R1 进度** | **[30-GATE-R1-PROGRESS](docs/30-GATE-R1-PROGRESS.md)** |
+| **交接文档（状态/任务/坑/红线）** | **[31-HANDOVER](docs/31-HANDOVER.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 
