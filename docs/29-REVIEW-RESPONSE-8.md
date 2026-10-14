@@ -80,10 +80,16 @@ CI 新增两个 job（`ci.yml`）：
 
 ## 4. 已知边界与后续
 
-- docker-deploy 首跑可能需要按真实环境微调（httpbin 外部依赖、runner
-  拉镜像耗时）——迭代到绿为止，不宣称未验证的结论；
-- QA-DEP-04 的宿主机防火墙（DOCKER-USER）部分：CI 覆盖容器级阻断；
-  宿主机层规则需在真实主机实测（样例已修正路径）；
+CI 首跑迭代记录（如实）：`15b7bf4` 两个新 job 首跑失败——PG job 因
+所有测试共享一个库（token_hash 唯一冲突 + QA-PG-01 无法在已 head 的
+库上从旧版升级）、docker job 因 compose 文件路径；`8ee019b` 修复后
+docker-deploy 通过、PG job 暴露两处方言差异（PG 强制 FK 需完整父链、
+SQLite `group_concat` 不存在）；`95c0be1` **全部五个 job 绿**
+（lint/test 双 OS、web、PG 矩阵、docker 部署矩阵）。
+
+剩余边界：
+- QA-DEP-04 的宿主机防火墙（DOCKER-USER）部分：CI 已验证**容器级**
+  直连阻断；宿主机层规则需在真实主机实测（样例已修正路径）；
 - 多实例轮换的并存窗口：runbook 流程已在 docs/28 §4 固化，分布式
   协调（实例状态表/锁）留待企业试点按需引入（评审同意不引入队列）。
 
@@ -95,4 +101,8 @@ CI 新增两个 job（`ci.yml`）：
   `ci-ticket-key-` 合成前缀）：全部通过
 - `docker compose config`：默认排除 mock-crm、127.0.0.1 绑定、
   egress-gateway 双宿拓扑确认
-- CI：postgresql 与 docker-deploy 两个新 job 随本提交首跑
+- CI（`95c0be1`）：**五个 job 全绿**——双 OS 测试、前端、
+  **PR-QA-06 postgres matrix**（QA-PG-01..05 实跑通过）、
+  **PR-QA-06 docker deploy matrix**（QA-DEP-01..05 实跑通过：
+  镜像构建、健康检查、外部 HTTPS 经网关、内部对端直连、
+  未批准/元数据/明文拒绝、容器级直连阻断、凭证不入日志）
