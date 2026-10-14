@@ -4,10 +4,21 @@ An agent acts for a user only while an ACTIVE, unexpired delegation row
 exists. Profile bindings for an agent context are stored in the DELEGATING
 user's scope, so two users sharing one agent can never overwrite each
 other's effective profile.
+
+Review3 SEC-046 / ADR-005 adds *delegation contexts*: short-lived
+HMAC-signed tickets issued over an authenticated USER API call. A shared
+agent with several active delegations may only pick the acting user by
+presenting a valid ticket - never by a request parameter. Tickets are
+unforgeable without the server secret and expire quickly.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
+import uuid
 from uuid import UUID
 
 from ppswitch_core.errors import ApiError, ErrorCode
@@ -16,6 +27,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ppswitch_control.services.invocation_service import epoch_now
+
+DELEGATION_CONTEXT_TTL_S = 10 * 60  # review3: short-lived by design
+DELEGATION_CONTEXT_MAX_LEN = 2048
 
 
 def _epoch(value) -> float:
@@ -136,3 +150,110 @@ def revoke_delegation(
         )
     )
     return delegation
+
+
+# ---------------------------------------------------------------------------
+# delegation context tickets (review3 SEC-046 / ADR-005)
+# ---------------------------------------------------------------------------
+
+
+def _b64encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64decode(text: str) -> bytes:
+    padding = "=" * (-len(text) % 4)
+    return base64.urlsafe_b64decode(text + padding)
+
+
+def issue_delegation_context(
+    session: Session,
+    *,
+    workspace_id: UUID,
+    principal_id: UUID,
+    delegation_id: UUID,
+    secret: str,
+    ttl_s: int = DELEGATION_CONTEXT_TTL_S,
+) -> tuple[str, float]:
+    """Issue a short-lived, signed acting-identity ticket (user-auth only).
+
+    The ticket proves that the delegating USER initiated this context right
+    now; an agent cannot mint one for another user because it lacks the
+    server secret and the user credential.
+    """
+    delegation = session.get(DelegationRow, delegation_id)
+    if delegation is None or delegation.workspace_id != workspace_id:
+        raise ApiError(ErrorCode.NOT_FOUND, "Delegation not found")
+    if delegation.user_principal_id != principal_id:
+        raise ApiError(ErrorCode.FORBIDDEN, "Only the delegating user may issue contexts")
+    if not is_active(delegation):
+        raise ApiError(ErrorCode.CONFLICT, "Delegation is not active")
+
+    expires = epoch_now() + ttl_s
+    payload = {
+        "v": 1,
+        "delegation_id": str(delegation.id),
+        "workspace_id": str(workspace_id),
+        "user_id": str(delegation.user_principal_id),
+        "agent_id": str(delegation.agent_principal_id),
+        "scopes": delegation.scopes or [],
+        "exp": expires,
+        "nonce": uuid.uuid4().hex,
+    }
+    body = _b64encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    signature = _b64encode(
+        hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    )
+    session.add(
+        AuditEventRow(
+            workspace_id=workspace_id,
+            actor_id=principal_id,
+            action="delegation.context.issue",
+            decision="allowed",
+            redacted_metadata={
+                "delegation_id": str(delegation_id),
+                "agent_principal_id": str(delegation.agent_principal_id),
+            },
+        )
+    )
+    return f"{body}.{signature}", expires
+
+
+def verify_delegation_context(
+    token: str,
+    *,
+    secret: str,
+    workspace_id: UUID,
+    agent_principal_id: UUID,
+) -> dict:
+    """Verify a delegation context ticket; raise FORBIDDEN on any mismatch.
+
+    Returns the payload (with ``user_id`` naming the acting user). The
+    caller still re-checks that the underlying delegation is ACTIVE - the
+    ticket proves issuance, revocation is checked against live state.
+    """
+    if not token or len(token) > DELEGATION_CONTEXT_MAX_LEN or token.count(".") != 1:
+        raise ApiError(ErrorCode.FORBIDDEN, "Malformed delegation context")
+    body, signature = token.split(".", 1)
+    expected = _b64encode(
+        hmac.new(secret.encode("utf-8"), body.encode("ascii"), hashlib.sha256).digest()
+    )
+    if not hmac.compare_digest(signature, expected):
+        raise ApiError(ErrorCode.FORBIDDEN, "Delegation context signature is invalid")
+    try:
+        payload = json.loads(_b64decode(body))
+    except (ValueError, TypeError) as exc:
+        raise ApiError(ErrorCode.FORBIDDEN, "Malformed delegation context") from exc
+    if payload.get("v") != 1:
+        raise ApiError(ErrorCode.FORBIDDEN, "Unsupported delegation context version")
+    if float(payload.get("exp", 0)) < epoch_now():
+        raise ApiError(ErrorCode.FORBIDDEN, "Delegation context has expired")
+    if payload.get("workspace_id") != str(workspace_id):
+        raise ApiError(ErrorCode.FORBIDDEN, "Delegation context belongs to another workspace")
+    if payload.get("agent_id") != str(agent_principal_id):
+        raise ApiError(
+            ErrorCode.FORBIDDEN, "Delegation context was issued for a different agent"
+        )
+    return payload

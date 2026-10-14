@@ -123,6 +123,7 @@ def invoke_capability(
     approval_request_id: UUID | None,
     settings,
     executor_client: httpx.Client,
+    delegation_context: str | None = None,
 ) -> dict:
     # --- capability resolution first (workspace-scoped, no cross-tenant leak)
     capability = session.scalars(
@@ -202,23 +203,41 @@ def invoke_capability(
             grant_scopes = sorted({s for g in active_grants for s in (g.scopes or [])})
 
     # --- delegation (P0-2 / SEC-033): an agent acts for a user only under
-    # an ACTIVE delegation; the delegating user's bindings are the ones used
+    # an ACTIVE delegation; the delegating user's bindings are the ones used.
+    # SEC-046 / ADR-005: with several active delegations the acting user is
+    # selected ONLY by a signed, short-lived delegation context ticket that
+    # the delegating USER issued over an authenticated API call - never by
+    # a request parameter the model could fill in.
     delegation_scopes: list[str] | None = None
     if principal_kind == PrincipalKind.AGENT.value:
         from ppswitch_control.services.delegation_service import (
             active_delegations_for_agent,
+            verify_delegation_context,
         )
 
         delegations = active_delegations_for_agent(session, workspace_id, principal_id)
-        # explicit "agent:<id>:<user>" disambiguates shared agents
-        parts = context_key.split(":", 2)
-        if len(parts) == 3:
-            try:
-                wanted = UUID(parts[2])
-            except ValueError as exc:
-                raise ApiError(ErrorCode.BAD_REQUEST, "Invalid agent context") from exc
-            delegations = [d for d in delegations if d.user_principal_id == wanted]
-        if len(delegations) == 1:
+        if delegation_context is not None:
+            payload = verify_delegation_context(
+                delegation_context,
+                secret=settings.internal_token,
+                workspace_id=workspace_id,
+                agent_principal_id=principal_id,
+            )
+            wanted = UUID(payload["user_id"])
+            matched = [d for d in delegations if d.user_principal_id == wanted]
+            if len(matched) != 1:
+                _audit(
+                    session, workspace_id, principal_id, "invocation.deny", "denied",
+                    {"capability": capability_name, "reason": "context_delegation_inactive"},
+                )
+                session.commit()
+                raise ApiError(
+                    ErrorCode.FORBIDDEN,
+                    "Delegation context does not match an active delegation",
+                )
+            delegating_user_id = matched[0].user_principal_id
+            delegation_scopes = matched[0].scopes or None
+        elif len(delegations) == 1:
             delegating_user_id = delegations[0].user_principal_id
             delegation_scopes = delegations[0].scopes or None
         elif not delegations:
@@ -234,7 +253,8 @@ def invoke_capability(
         else:
             raise ApiError(
                 ErrorCode.CONFLICT,
-                "Multiple active delegations; disambiguate with agent:<id>:<user>",
+                "Multiple active delegations; present a delegation context ticket "
+                "issued by the acting user",
             )
 
     # --- idempotency: a key replays ONLY for the same principal invoking the
@@ -243,6 +263,9 @@ def invoke_capability(
     # R-07 / SEC-037: the replay happens AFTER grant + delegation checks -
     # an expired grant or a revoked delegation can no longer read cached
     # results through an old idempotency key.
+    # SEC-043: the DELEGATING USER is part of the replay identity - the
+    # same shared agent with the same key under another user's delegation
+    # is a conflict, never a cross-user cache hit.
     if idempotency_key:
         existing = session.scalars(
             select(InvocationRow).where(
@@ -251,11 +274,15 @@ def invoke_capability(
             )
         ).one_or_none()
         if existing is not None:
+            recorded_user = existing.profile_snapshot.get("delegating_user_id")
             replay_ok = (
                 existing.principal_id == principal_id
                 and existing.capability_name == capability.name
                 and existing.capability_version == version_row.version
                 and existing.arguments_digest == _arguments_digest(arguments)
+                and recorded_user == (
+                    str(delegating_user_id) if delegating_user_id is not None else None
+                )
             )
             if not replay_ok:
                 raise ApiError(
@@ -352,6 +379,30 @@ def invoke_capability(
         raise ApiError(
             ErrorCode.FORBIDDEN, "No scope is permitted by grant, connection and delegation"
         )
+
+    # --- required scopes (review3 SEC-044): a capability that declares
+    # required_scopes must be covered EXPLICITLY by the authorization chain.
+    # A non-empty intersection is not authorization: every required scope
+    # must be inside it, and an empty/unscoped chain (None) never satisfies
+    # a scoped capability - explicit, least-privilege by default.
+    required_scopes = list(version_row.required_scopes or [])
+    if required_scopes:
+        missing = set(required_scopes) - (effective_scopes or set())
+        if effective_scopes is None or missing:
+            _audit(
+                session, workspace_id, principal_id, "invocation.deny", "denied",
+                {
+                    "capability": capability_name,
+                    "reason": "required_scopes_not_covered",
+                    "missing": sorted(missing),
+                },
+            )
+            session.commit()
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                "Capability requires scopes not covered by the authorization chain",
+                {"missing_scopes": sorted(missing) or sorted(required_scopes)},
+            )
 
     execution = version_row.execution or {}
     plan = InvocationPlan(

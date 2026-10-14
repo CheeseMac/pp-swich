@@ -114,6 +114,12 @@ class LocalBrokerTransport:
                 },
                 "profile_label": "mock-profile",
             }
+        if (
+            method == "POST"
+            and path.startswith("/api/v1/delegations/")
+            and path.endswith("/context")
+        ):
+            return {"context": "mock-delegation-context-ticket", "expires_at": "soon"}
         if method == "GET" and path == "/api/v1/capabilities":
             return self._capabilities
         if method == "GET" and path == "/api/v1/active-bindings":
@@ -155,10 +161,14 @@ class PPSwitchClient:
         version: str | None = None,
         context_key: str = "personal",
         idempotency_key: str | None = None,
+        delegation_context: str | None = None,
     ) -> InvokeResult:
         """Invoke one published capability with business arguments only.
 
         There is intentionally no parameter for tokens, URLs or headers.
+        ``delegation_context`` is the SERVER-SIGNED short-lived ticket that
+        a delegating user issued over their own authenticated session; it
+        is a credential, not a model-fillable identity claim.
         """
         from ppswitch.reserved import assert_no_reserved_arguments
 
@@ -172,6 +182,8 @@ class PPSwitchClient:
             payload["version"] = version
         if idempotency_key:
             payload["idempotency_key"] = idempotency_key
+        if delegation_context:
+            payload["delegation_context"] = delegation_context
         data = self._transport.request("POST", "/api/v1/invocations", payload)
         return InvokeResult(
             invocation_id=data.get("invocation_id", ""),
@@ -183,6 +195,14 @@ class PPSwitchClient:
 
     def list_capabilities(self) -> list[dict[str, Any]]:
         return self._transport.request("GET", "/api/v1/capabilities")
+
+    def issue_delegation_context(self, delegation_id: str) -> dict[str, Any]:
+        """USER-side: mint a short-lived acting-identity ticket for an
+        agent delegation (review3 SEC-046 / ADR-005). Requires the
+        delegating user's own credential; agents cannot mint tickets."""
+        path = f"/api/v1/delegations/{delegation_id}/context"
+        return self._transport.request("POST", path)
+
 
     def profile_status(self) -> list[dict[str, Any]]:
         return self._transport.request("GET", "/api/v1/active-bindings")

@@ -43,7 +43,18 @@ def create_capability(
     allow_fields: list[str],
     risk_level: str,
     execution: dict | None,
+    required_scopes: list[str] | None = None,
 ) -> CapabilityRow:
+    # review3 (metadata hygiene): manually created capabilities pass through
+    # the SAME schema sanitizer as discovery imports - canaries/secret-shaped
+    # strings never reach operation storage, catalogs or model context via
+    # the hand-written path either
+    from ppswitch_discovery.parsers.openapi import sanitize_schema
+
+    description = sanitize_schema(description) if description else description
+    input_schema = sanitize_schema(input_schema) if input_schema else input_schema
+    output_schema = sanitize_schema(output_schema) if output_schema else output_schema
+
     Capability.model_validate(
         Capability(id=uuid_module.uuid4(), workspace_id=workspace_id, name=name,
                    display_name=display_name, description=description)
@@ -79,12 +90,14 @@ def create_capability(
     session.add(capability)
     session.flush()
 
+    required_scopes = sorted(set(required_scopes or []))
     draft_payload = {
         "operation_version_id": str(latest_op_version.id),
         "input_schema": input_schema,
         "output_schema": output_schema,
         "allow_fields": sorted(allow_fields),
         "execution": execution or {},
+        "required_scopes": required_scopes,
     }
     session.add(
         CapabilityVersionRow(
@@ -96,6 +109,7 @@ def create_capability(
             output_schema=output_schema,
             allow_fields=sorted(allow_fields),
             execution=execution or {},
+            required_scopes=required_scopes,
             status="draft",
             content_hash=content_hash(draft_payload),
         )
@@ -271,6 +285,7 @@ def publish_capability(
         output_schema=draft.output_schema,
         allow_fields=draft.allow_fields,
         execution=draft.execution,
+        required_scopes=draft.required_scopes or [],
         status="published",
         published_at=None,  # set below; entity validation wants a timestamp
         content_hash=draft.content_hash,

@@ -18,7 +18,8 @@ def test_sdk_has_no_secret_api() -> None:
     client = PPSwitchClient(LocalBrokerTransport())
     public = [name for name in dir(client) if not name.startswith("_")]
     assert sorted(public) == [
-        "from_http", "from_local_broker", "invoke", "list_capabilities", "profile_status",
+        "from_http", "from_local_broker", "invoke", "issue_delegation_context",
+        "list_capabilities", "profile_status",
     ]
     forbidden = ("get_secret", "export_secret", "read_env", "proxy_url", "run_shell")
     for name in forbidden:

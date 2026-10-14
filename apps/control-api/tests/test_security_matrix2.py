@@ -240,7 +240,8 @@ class TestSEC033SharedAgentBindingIsolation:
         assert agent_binding["version"] == 1  # untouched by alice's rebind
         assert agent_binding["active_profile_id"] == dave_profile
 
-        # grant + both delegations let the agent run under EITHER user
+        # grant + both delegations let the agent run under EITHER user -
+        # selected ONLY via a signed context ticket the user issued (SEC-046)
         grant = control.post(
             "/api/v1/agent-grants",
             json={"agent_principal_id": agent_id, "capability_id": ids["capability_id"]},
@@ -251,18 +252,40 @@ class TestSEC033SharedAgentBindingIsolation:
             (ALICE_TOKEN, "CRM Demo B"),   # alice rebound to B above
             (DAVE_TOKEN, "Dave B"),
         ):
-            user_id = _principal_id(control, token)
+            delegation_id = next(
+                d["id"] for d in control.get(
+                    "/api/v1/delegations", headers=auth(token)
+                ).json()["data"]
+                if d["agent_principal_id"] == agent_id and d["active"]
+            )
+            ticket = control.post(
+                f"/api/v1/delegations/{delegation_id}/context",
+                headers=auth(token),
+            )
+            assert ticket.status_code == 201, ticket.text
             invocation = control.post(
                 "/api/v1/invocations",
                 json={
                     "capability": "crm.get_customer",
                     "arguments": {"customer_id": "C-1024"},
-                    "context_key": f"agent:{agent_id}:{user_id}",
+                    "context_key": f"agent:{agent_id}",
+                    "delegation_context": ticket.json()["data"]["context"],
                 },
                 headers=auth(AGENT_TOKEN),
             )
             assert invocation.status_code == 200, invocation.text
             assert invocation.json()["data"]["profile_label"] == expected_profile
+        # the legacy parameter-form user selection is gone for good
+        rejected = control.post(
+            "/api/v1/invocations",
+            json={
+                "capability": "crm.get_customer",
+                "arguments": {"customer_id": "C-1024"},
+                "context_key": f"agent:{agent_id}:{_principal_id(control, ALICE_TOKEN)}",
+            },
+            headers=auth(AGENT_TOKEN),
+        )
+        assert rejected.status_code == 400, rejected.text  # pattern-rejected
 
     def test_agent_binding_requires_delegation(self, demo):
         control = _client(demo)

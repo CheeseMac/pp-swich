@@ -269,6 +269,10 @@ class CapabilityVersionRow(Base):
     # request mapping: how validated arguments fill the reviewed operation:
     # {"query": {"verbose": "verbose"}, "body": {"amount": "amount"}}
     execution: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # review3 SEC-044: scopes this capability REQUIRES; empty = unscoped.
+    # Non-empty means every invocation must carry an explicit authorization
+    # chain (grant/connection/delegation) covering ALL of them.
+    required_scopes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(16), default="draft")
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)

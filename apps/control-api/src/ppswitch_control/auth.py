@@ -108,7 +108,8 @@ ACTION_MIN_ROLE: dict[str, int] = {
     "services.write": 0,
     "endpoints.read": 0,
     "endpoints.write": 0,
-    "endpoints.approve": 0,
+    "endpoints.approve": 1,   # review3 SEC-047: approving network targets
+                              # is a reviewer-grade action, not member-grade
     "discovery.import": 0,
     "operations.read": 0,
     "operations.verify": 0,
@@ -126,7 +127,9 @@ ACTION_MIN_ROLE: dict[str, int] = {
     "delegations.read": 0,
     "invocations.create": 0,
     "invocations.read": 0,
-    "approvals.decide": 0,
+    "approvals.decide": 1,   # review3 SEC-047: high-risk approvals require
+                             # the reviewer role (business-resource
+                             # approvers arrive with RBAC deepening)
     "agent_grants.write": 2,    # granting is an admin action
     "audit.read": 2,            # workspace-wide audit trail: admins only
 }

@@ -112,6 +112,12 @@ def _project(value: Any, schema: dict[str, Any], dropped: _Dropped, depth: int =
     if not isinstance(schema, dict):
         schema = {}
 
+    # SEC-048: an unresolved reference is not an interpretable schema -
+    # no value (object, array or scalar) may pass through it
+    if "$ref" in schema:
+        dropped.add("<unresolved_ref>")
+        return None
+
     expected = schema.get("type")
 
     # --- type gate FIRST (SEC-035): the declared type decides before any
@@ -149,8 +155,19 @@ def _project(value: Any, schema: dict[str, Any], dropped: _Dropped, depth: int =
             out[key_text] = _project(item, properties[key_text], dropped, depth + 1)
         return out
     if isinstance(value, list):
+        # SEC-048 (review3): an array without a usable ``items`` schema is
+        # DENIED outright - regex-redacted pass-through is not an allowlist.
+        # An items schema that is an unresolved reference (``$ref``) or that
+        # declares neither ``type`` nor ``properties`` is equally unusable.
         raw_items = schema.get("items")
-        items_schema: dict[str, Any] = raw_items if isinstance(raw_items, dict) else {}
+        usable = isinstance(raw_items, dict) and (
+            "$ref" not in raw_items
+            and (raw_items.get("type") is not None or raw_items.get("properties"))
+        )
+        if not usable:
+            dropped.add("<items_unspecified>")
+            return None
+        items_schema: dict[str, Any] = raw_items  # type: ignore[assignment]
         projected = [
             _project(item, items_schema, dropped, depth + 1)
             for item in value[:MAX_ARRAY_ITEMS]

@@ -142,6 +142,8 @@ class CapabilityCreate(BaseModel):
     allow_fields: list[str] = Field(default_factory=list)
     risk_level: str = "low"
     execution: dict = Field(default_factory=dict)
+    # review3 SEC-044: scopes this capability requires at execution time
+    required_scopes: list[str] = Field(default_factory=list)
 
 
 class ReviewRequest(BaseModel):
@@ -175,10 +177,13 @@ class InvocationCreate(BaseModel):
     capability: str = Field(min_length=1, max_length=128)
     version: str | None = None
     context_key: str = Field(default="personal",
-        pattern=r"^(personal|agent:[A-Za-z0-9._-]+(?::[A-Za-z0-9._-]+)?|deployment:[A-Za-z0-9._-]+)$")
+        pattern=r"^(personal|agent:[A-Za-z0-9._-]+|deployment:[A-Za-z0-9._-]+)$")
     arguments: dict = Field(default_factory=dict)
     idempotency_key: str | None = Field(default=None, max_length=128)
     approval_request_id: UUID | None = None
+    # SEC-046: signed, short-lived acting-identity ticket issued by the
+    # delegating user; required to disambiguate a shared agent's delegations
+    delegation_context: str | None = Field(default=None, max_length=2048)
 
 
 class AgentGrantCreate(BaseModel):
@@ -294,11 +299,18 @@ def create_endpoint(
             ErrorCode.ENDPOINT_NOT_APPROVABLE,
             "Endpoint approval requires the approve action by another principal",
         )
-    allowed_schemes: tuple[str, ...] = ("http://", "https://")
-    if request.app.state.settings.demo_mode:
-        allowed_schemes = (*allowed_schemes, "mock://")  # in-process demo transport
+    settings_ = request.app.state.settings
+    allowed_schemes: tuple[str, ...] = ("https://",)
+    if settings_.demo_mode or settings_.allow_plain_http:
+        # in-process demo transport / explicitly approved plaintext network
+        allowed_schemes = ("http://", "https://")
+        if settings_.demo_mode:
+            allowed_schemes = (*allowed_schemes, "mock://")
     if not payload.base_url.startswith(allowed_schemes):
-        raise ApiError(ErrorCode.BAD_REQUEST, "base_url must be http(s)")
+        raise ApiError(
+            ErrorCode.BAD_REQUEST,
+            "base_url must be https (plain http requires explicit operator opt-in)",
+        )
     endpoint = EndpointRow(
         id=__import__("uuid").uuid4(),
         workspace_id=auth.workspace_id,
@@ -529,6 +541,7 @@ def verify_operation(
 def _capability_view(
     row: CapabilityRow, versions: list[CapabilityVersionRow] | Sequence[CapabilityVersionRow]
 ) -> dict:
+    """Management view: every version incl. drafts and internal mappings."""
     return {
         "id": str(row.id),
         "name": row.name,
@@ -548,6 +561,47 @@ def _capability_view(
             }
             for v in versions
         ],
+    }
+
+
+def _public_tool_view(row: CapabilityRow, versions) -> dict:
+    """SEC-045: what an AGENT may see - published versions only, no draft
+    data, no internal execution mapping, no allow-lists or output guard
+    configuration. Name, description, public input schema, version and a
+    risk hint; nothing else."""
+    published = [v for v in versions if v.status == "published"]
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "display_name": row.display_name,
+        "description": row.description,
+        "status": row.status,
+        "versions": [
+            {
+                "version": v.version,
+                "risk_level": v.risk_level,
+                "status": v.status,
+                "input_schema": v.input_schema,
+            }
+            for v in published
+        ],
+    }
+
+
+def _agent_granted_ids(session: Session, auth: AuthContext) -> set:
+    """Capabilities granted to this agent via a NON-EXPIRED grant (SEC-045)."""
+    from ppswitch_control.services.invocation_service import _epoch, epoch_now
+
+    now = epoch_now()
+    return {
+        grant.capability_id
+        for grant in session.scalars(
+            select(AgentGrantRow).where(
+                AgentGrantRow.workspace_id == auth.workspace_id,
+                AgentGrantRow.agent_principal_id == auth.principal_id,
+            )
+        ).all()
+        if grant.expires_at is None or _epoch(grant.expires_at) >= now
     }
 
 
@@ -573,6 +627,7 @@ def create_capability_route(
         allow_fields=payload.allow_fields,
         risk_level=payload.risk_level,
         execution=payload.execution,
+        required_scopes=payload.required_scopes,
     )
     return ok(request, {"id": str(capability.id), "status": capability.status}, 201)
 
@@ -588,19 +643,12 @@ def list_capabilities(
     if status:
         stmt = stmt.where(CapabilityRow.status == status)
     rows = session.scalars(stmt.order_by(CapabilityRow.name)).all()
-    if auth.principal.kind == "agent":
-        # review Q5: an agent's tool directory (HTTP and MCP alike) must
-        # contain only capabilities explicitly granted to it, and only in
-        # their PUBLISHED form (SEC-032: drafts are never agent-visible)
-        granted_ids = {
-            grant.capability_id
-            for grant in session.scalars(
-                select(AgentGrantRow).where(
-                    AgentGrantRow.workspace_id == auth.workspace_id,
-                    AgentGrantRow.agent_principal_id == auth.principal_id,
-                )
-            ).all()
-        }
+    is_agent = auth.principal.kind == "agent"
+    if is_agent:
+        # review Q5 + SEC-032: an agent's tool directory contains only
+        # capabilities granted via a NON-EXPIRED grant, in their PUBLISHED
+        # form; SEC-045: serialized through the public tool view
+        granted_ids = _agent_granted_ids(session, auth)
         rows = [
             row for row in rows
             if row.id in granted_ids and row.status == "published"
@@ -619,7 +667,9 @@ def list_capabilities(
             .where(CapabilityVersionRow.capability_id == row.id)
             .order_by(CapabilityVersionRow.created_at)
         ).all()
-        result.append(_capability_view(row, versions))
+        result.append(
+            _public_tool_view(row, versions) if is_agent else _capability_view(row, versions)
+        )
     return ok(request, result)
 
 
@@ -635,24 +685,24 @@ def get_capability(
         raise ApiError(ErrorCode.CAPABILITY_NOT_FOUND, "Capability not found")
     # SEC-032 / SEC-042: agents see only granted+published; private
     # capabilities require ownership or the admin role (existence hidden)
-    if auth.principal.kind == "agent":
-        granted = session.scalars(
-            select(AgentGrantRow).where(
-                AgentGrantRow.workspace_id == auth.workspace_id,
-                AgentGrantRow.agent_principal_id == auth.principal_id,
-                AgentGrantRow.capability_id == capability_id,
-            )
-        ).first()
-        if granted is None or row.status != "published":
+    is_agent = auth.principal.kind == "agent"
+    if is_agent:
+        if capability_id not in _agent_granted_ids(session, auth) or row.status != "published":
             raise ApiError(ErrorCode.CAPABILITY_NOT_FOUND, "Capability not found")
     elif not _resource_visible(row.visibility, row.created_by, auth):
         raise ApiError(ErrorCode.CAPABILITY_NOT_FOUND, "Capability not found")
-    versions = session.scalars(
+    stmt = (
         select(CapabilityVersionRow)
         .where(CapabilityVersionRow.capability_id == row.id)
         .order_by(CapabilityVersionRow.created_at)
-    ).all()
-    return ok(request, _capability_view(row, versions))
+    )
+    if is_agent:
+        stmt = stmt.where(CapabilityVersionRow.status == "published")
+    versions = session.scalars(stmt).all()
+    return ok(
+        request,
+        _public_tool_view(row, versions) if is_agent else _capability_view(row, versions),
+    )
 
 
 @router.post("/capabilities/{capability_id}/review")
@@ -929,6 +979,7 @@ def create_invocation(
         approval_request_id=payload.approval_request_id,
         settings=settings,
         executor_client=executor_client,
+        delegation_context=payload.delegation_context,
     )
     return ok(request, result, 200)
 
@@ -1116,6 +1167,41 @@ def list_delegations(
             }
             for r in rows
         ],
+    )
+
+
+@router.post("/delegations/{delegation_id}/context")
+def issue_delegation_context_route(
+    delegation_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("delegations.write")),
+    session: Session = Depends(get_session),
+):
+    """SEC-046 / ADR-005: mint a short-lived signed acting-identity ticket.
+
+    Only the delegating USER can call this (authenticated route). The agent
+    presents the ticket on invocations to select the acting identity when
+    several delegations are active - a parameter-named user is never
+    trusted, and the ticket cannot be forged without the server secret.
+    """
+    from ppswitch_control.services.delegation_service import issue_delegation_context
+
+    token, expires = issue_delegation_context(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        delegation_id=delegation_id,
+        secret=request.app.state.settings.internal_token,
+    )
+    from datetime import UTC, datetime
+
+    return ok(
+        request,
+        {
+            "context": token,
+            "expires_at": datetime.fromtimestamp(expires, tz=UTC).isoformat(),
+        },
+        201,
     )
 
 

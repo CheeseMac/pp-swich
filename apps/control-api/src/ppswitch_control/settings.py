@@ -33,6 +33,12 @@ class ControlSettings(BaseModel):
         "yes",
     )
     max_import_bytes: int = 5 * 1024 * 1024
+    # review3 / PR-DEP-14 (application side): endpoints carrying real
+    # credentials must be HTTPS by default; plain HTTP needs this explicit
+    # operator opt-in (demo mode implies it for localhost mocks)
+    allow_plain_http: bool = os.environ.get(
+        "PP_SWITCH_ALLOW_PLAIN_HTTP", "false"
+    ).lower() in ("1", "true", "yes")
     # local runtime directory (gitignored) where seed-demo writes synthetic
     # dev tokens so the demo login can list them; never committed
     dev_tokens_path: str = "data/dev-tokens.json"

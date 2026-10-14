@@ -6,7 +6,7 @@
 >
 > 通用 API 发现、连接切换、凭证保护与 Agent 安全能力平台。
 
-**项目状态：Pre-alpha —— 首竖切 + 两轮评审安全加固（PR-SEC-01…05、v0.1.2：SEC-06…11/FIX-12）完成（2026-10-13）**  
+**项目状态：Pre-alpha —— 首竖切 + 三轮评审安全加固（PR-SEC-01…05、v0.1.2、v0.1.3 Authorization Boundary Fix）完成（2026-10-14）**  
 **本仓库启动文档版本：v0.1.0，2026-10-13**  
 **品牌名称：`pp switch`；仓库 / 包名称：`pp-switch`。**
 
@@ -28,6 +28,7 @@
 - CI：lint / typecheck / 全量测试（双 OS）/ 密钥扫描（`.github/workflows`）
 - 安全加固第一轮（技术评审后）：Connection 所有权三段校验、管理 API 仅限人类且审核≠创建人、审批绑定不可变 Proposal（请求人+版本+档案+参数摘要+15 分钟时效）并原子消费、幂等键绑定主体（冲突 409 而非泄漏）、执行器路径段校验+最终 URL 复检+强制主机白名单+元数据段不可豁免+请求时 DNS 复验+流式限长、响应守卫输出 Schema 递归白名单投影、执行快照脱敏（不存参数/secret_ref/目标地址）、demo 模式默认关闭且生产配置不完整拒绝启动（对应攻击组合测试 SEC-021…030）
 - 安全加固第二轮 v0.1.2（复核后）：全路由权限矩阵（Agent 默认仅可见已授予的已发布能力并可调用；member/reviewer/admin 角色）、User→Agent 委托表与按委托人隔离的 Agent Profile 绑定（共享 Agent 互不覆盖，SEC-033）、连接层 IP 钉扎（解析-校验-连接同一地址，DNS 检查后不可被二次解析改道）、响应守卫类型门先行 + 未知对象默认拒绝 + allow_fields 与 Schema 取交集、OpenAPI 导入期 Schema 清洗（example/default 等注解与密钥形状字符串不落库不进工具目录）、grant/connection/delegation scopes 交集授权、幂等回放前重新鉴权、上传分块限额读取、MCP 必填参数前置与工具名冲突双端拒绝、private/team/organization 可见性过滤、YAML 导入（对应回归测试 SEC-031…042）
+- 安全加固第三轮 v0.1.3（复审后）：幂等回放绑定委托用户（共享 Agent 不能跨用户复用缓存结果）、Capability required_scopes 显式授权链（空链不满足 scoped 能力）、Agent 目录公共视图（仅 published 版本、无内部 execution/allow_fields、过期 grant 剔除）、签名式 Delegation Context 票据取代参数选身份（ADR-005）、高风险审批与 Endpoint 审批提升至 reviewer 角色、响应守卫拒绝无 items 数组与未解析 $ref、endpoint 默认强制 HTTPS、手动创建 Capability 过导入级元数据清洗（对应回归测试 SEC-043…048 与共享 Agent 综合攻击场景）
 
 **计划中、尚未实现（请勿当作已有能力）：**
 
@@ -61,7 +62,7 @@ uv run python scripts/seed-demo.py
 #    -> Invocations 调用并观察数据集随档案切换
 ```
 
-测试：`uv run pytest`（188 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042）；检查：`uv run ruff check . && uv run mypy packages apps`。
+测试：`uv run pytest`（202 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）；检查：`uv run ruff check . && uv run mypy packages apps`。
 
 ## 解决什么问题
 
@@ -122,6 +123,7 @@ uv run python scripts/seed-demo.py
 | **v0.1.0 首竖切实现审核报告（送审）** | **[20-IMPLEMENTATION-REVIEW](docs/20-IMPLEMENTATION-REVIEW.md)** |
 | **技术评审回复与安全加固记录（v0.1.1）** | **[21-REVIEW-RESPONSE](docs/21-REVIEW-RESPONSE.md)** |
 | **第二轮复核回复与 v0.1.2 加固记录** | **[22-REVIEW-RESPONSE-2](docs/22-REVIEW-RESPONSE-2.md)** |
+| **第三轮复审回复与 v0.1.3 加固记录** | **[23-REVIEW-RESPONSE-3](docs/23-REVIEW-RESPONSE-3.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 
