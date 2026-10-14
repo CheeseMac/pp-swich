@@ -81,7 +81,7 @@ def _test_db_url(tmp_path: Path) -> str:
 
 
 @pytest.fixture()
-def harness(tmp_path: Path) -> Harness:
+def harness(tmp_path: Path):
     db_url = _test_db_url(tmp_path)
     run_upgrade(db_url)
 
@@ -110,8 +110,12 @@ def harness(tmp_path: Path) -> Harness:
     )
     control_app = create_app(settings, executor_client=executor, run_migrations=False)
     control = TestClient(control_app)
-    return Harness(control=control, executor=executor, db_url=db_url,
-                   session_factory=session_factory)
+    yield Harness(control=control, executor=executor, db_url=db_url,
+                  session_factory=session_factory)
+    # PG matrix: per-test engines must release their pooled connections,
+    # otherwise the suite exhausts max_connections (hit after FEAT-01
+    # grew the suite past ~280 tests)
+    engine.dispose()
 
 
 def auth(token: str) -> dict:
