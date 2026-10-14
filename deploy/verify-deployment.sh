@@ -13,6 +13,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+export COMPOSE_FILE="deploy/docker-compose.yml"
 export PP_SWITCH_INTERNAL_TOKEN="ci-internal-token-0123456789abcdef"
 export PP_SWITCH_DELEGATION_SIGNING_KEY="ci-ticket-key-0123456789abcdef"
 # stdlib-only generation of a random valid Fernet key (32 urlsafe-b64 bytes)

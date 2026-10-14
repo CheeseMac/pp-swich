@@ -28,7 +28,12 @@ PRE_WIPE_REVISION = "d4e7b91c6a30"  # review5: last revision before the wipe
 
 
 def _test_url(tmp_path: Path, name: str) -> str:
-    return os.environ.get("PP_SWITCH_TEST_DB_URL") or f"sqlite:///{tmp_path / name}"
+    pg_base = os.environ.get("PP_SWITCH_TEST_DB_URL")
+    if pg_base:
+        from ppswitch_db.testdb import provision_test_database
+
+        return provision_test_database(pg_base, prefix="ppswitch_qa")
+    return f"sqlite:///{tmp_path / name}"
 
 
 def _alembic_config(url: str, revision: str):

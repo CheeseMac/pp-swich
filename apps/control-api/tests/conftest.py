@@ -72,7 +72,12 @@ def _test_db_url(tmp_path: Path) -> str:
     the CI matrix by setting PP_SWITCH_TEST_DB_URL (QA-PG-*)."""
     import os
 
-    return os.environ.get("PP_SWITCH_TEST_DB_URL") or f"sqlite:///{tmp_path / 'control-test.db'}"
+    pg_base = os.environ.get("PP_SWITCH_TEST_DB_URL")
+    if pg_base:
+        from ppswitch_db.testdb import provision_test_database
+
+        return provision_test_database(pg_base)  # one database per test
+    return f"sqlite:///{tmp_path / 'control-test.db'}"
 
 
 @pytest.fixture()

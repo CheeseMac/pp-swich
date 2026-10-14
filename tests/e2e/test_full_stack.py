@@ -46,7 +46,13 @@ def stack(tmp_path_factory, start_server_fixture):
     from ppswitch_mockcrm import app as mockcrm_app
 
     db_dir = tmp_path_factory.mktemp("e2e")
-    db_url = os.environ.get("PP_SWITCH_TEST_DB_URL") or f"sqlite:///{db_dir / 'e2e.db'}"
+    pg_base = os.environ.get("PP_SWITCH_TEST_DB_URL")
+    if pg_base:
+        from ppswitch_db.testdb import provision_test_database
+
+        db_url = provision_test_database(pg_base, prefix="ppswitch_e2e")
+    else:
+        db_url = f"sqlite:///{db_dir / 'e2e.db'}"
     run_upgrade(db_url)
     engine = create_engine_for_url(db_url)
     factory = create_session_factory(engine)
