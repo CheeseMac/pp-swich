@@ -71,17 +71,48 @@ done
 endgroup
 
 step "AUD-E2E-05: full agent chain against an external HTTPS backend"
+# seed demo principals directly in the container (mirrors seed-demo.py:
+# workspace + role-carrying users with KNOWN synthetic tokens)
+docker compose exec -T control python - <<'PY'
+import os
+import uuid
+
+from ppswitch_control.auth import hash_token
+from ppswitch_db.models import PrincipalRow, WorkspaceRow
+from ppswitch_db.session import create_engine_for_url, create_session_factory
+
+engine = create_engine_for_url(os.environ["PP_SWITCH_DB_URL"])
+factory = create_session_factory(engine)
+with factory() as session:
+    ws = session.query(WorkspaceRow).filter_by(slug="demo").one_or_none()
+    if ws is None:
+        ws = WorkspaceRow(id=uuid.uuid4(), slug="demo", name="Demo")
+        session.add(ws)
+        session.flush()
+    for kind, name, token, role in (
+        ("user", "Alice (ci)", "dev-token-alice-ci-001", "admin"),
+        ("user", "Carol (ci)", "dev-token-carol-ci-002", "reviewer"),
+    ):
+        if not session.query(PrincipalRow).filter_by(
+            token_hash=hash_token(token)
+        ).one_or_none():
+            session.add(PrincipalRow(
+                id=uuid.uuid4(), workspace_id=ws.id, kind=kind,
+                display_name=name, token_hash=hash_token(token),
+                token_hint=token[:14] + "...", role=role,
+            ))
+    session.commit()
+print("principals seeded")
+PY
+
 docker compose exec -T control python - <<'PY'
 # everything runs INSIDE the control container against localhost:8911
 import json
 import urllib.request
 
 BASE = "http://127.0.0.1:8911/api/v1"
-tokens = json.load(urllib.request.urlopen(
-    urllib.request.Request(BASE + "/dev/principals")))["data"]
-by_name = {p["display_name"].split(" (")[0].lower(): p for p in tokens}
-alice_token = by_name["alice"]["dev_token"]
-carol_token = by_name["carol"]["dev_token"]
+alice_token = "dev-token-alice-ci-001"
+carol_token = "dev-token-carol-ci-002"
 
 
 def api(method, path, token, payload=None):
