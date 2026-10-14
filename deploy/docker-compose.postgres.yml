@@ -1,0 +1,33 @@
+# 生产数据库 override：PostgreSQL 替代默认 SQLite（docs/28 §5）
+#   用法：docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
+# 需在 .env 提供 POSTGRES_PASSWORD；备份/恢复策略见 docs/28 §2、§4。
+
+name: pp-switch
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ppswitch
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ppswitch
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [internal]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ppswitch"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  control:
+    environment:
+      # 独立数据库身份；应用账号密码经 .env 注入
+      PP_SWITCH_DB_URL: postgresql+psycopg://ppswitch:${POSTGRES_PASSWORD}@postgres:5432/ppswitch
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

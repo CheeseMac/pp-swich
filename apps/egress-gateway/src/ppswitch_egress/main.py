@@ -31,9 +31,22 @@ import os
 import socket
 from dataclasses import dataclass, field
 
-from ppswitch_executor.network_policy import canonical_ip
+from ppswitch_executor.network_policy import _hard_denied, canonical_ip
 
 logger = logging.getLogger("ppswitch.egress")
+
+# AUD-EGRESS-02: CONNECT-only is NOT TLS-only. A bare hostname in the
+# allowlist authorizes port 443 ONLY; any other TLS port needs an
+# explicit "host:port" entry. End-to-end TLS remains the CLIENT's
+# verification duty - the gateway tunnels opaque bytes.
+DEFAULT_TLS_PORT = 443
+
+# AUD-EGRESS-03: workload authentication + quotas. The gateway must not
+# be usable as a generic TCP exit by anything that can reach port 8914.
+MAX_CONCURRENT_TUNNELS_PER_PEER = 32
+MAX_TUNNEL_SECONDS = 300.0
+RATE_WINDOW_SECONDS = 10.0
+RATE_MAX_CONNECTS = 60
 
 GATEWAY_PORT = 8914
 _TUNNEL_TIMEOUT_S = 10.0
@@ -43,6 +56,9 @@ _MAX_HEADER_BYTES = 8192
 @dataclass
 class GatewayPolicy:
     allowlist: set[str] = field(default_factory=set)
+    # AUD-EGRESS-03: Proxy-Authorization bearer token; empty disables
+    # authentication (local tests only - production compose sets it)
+    proxy_token: str = ""
 
     @classmethod
     def from_env(cls) -> GatewayPolicy:
@@ -56,11 +72,65 @@ class GatewayPolicy:
                     for line in handle
                     if line.strip() and not line.startswith("#")
                 }
-        return cls(allowlist=entries)
+        return cls(
+            allowlist=entries,
+            proxy_token=os.environ.get("EGRESS_PROXY_TOKEN", ""),
+        )
 
     def allows(self, host: str, port: int) -> bool:
         host = host.lower().strip("[]")
-        return host in self.allowlist or f"{host}:{port}" in self.allowlist
+        # AUD-EGRESS-02: explicit host:port entries authorize that port;
+        # a bare hostname authorizes the standard TLS port only
+        if f"{host}:{port}" in self.allowlist:
+            return True
+        return host in self.allowlist and port == DEFAULT_TLS_PORT
+
+    def authenticate(self, proxy_authorization: str) -> bool:
+        if not self.proxy_token:
+            return True  # auth disabled (local/dev only)
+        if proxy_authorization == f"Bearer {self.proxy_token}":
+            return True
+        # httpx embeds proxy credentials as Basic (user:password)
+        if proxy_authorization.startswith("Basic "):
+            import base64
+
+            try:
+                decoded = base64.b64decode(
+                    proxy_authorization[6:].encode("ascii")
+                ).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                return False
+            _, _, password = decoded.partition(":")
+            return password == self.proxy_token
+        return False
+
+
+class _Quotas:
+    """AUD-EGRESS-03: per-peer concurrency, rate and duration caps."""
+
+    def __init__(self) -> None:
+        self.concurrent: dict[str, int] = {}
+        self.connects: dict[str, list[float]] = {}
+
+    def admit(self, peer: str) -> str | None:
+        """Returns a denial reason, or None when admitted."""
+        import time
+
+        now = time.monotonic()
+        if self.concurrent.get(peer, 0) >= MAX_CONCURRENT_TUNNELS_PER_PEER:
+            return "concurrent tunnel limit reached"
+        window = [
+            t for t in self.connects.get(peer, []) if now - t < RATE_WINDOW_SECONDS
+        ]
+        if len(window) >= RATE_MAX_CONNECTS:
+            return "connect rate limit reached"
+        window.append(now)
+        self.connects[peer] = window
+        self.concurrent[peer] = self.concurrent.get(peer, 0) + 1
+        return None
+
+    def release(self, peer: str) -> None:
+        self.concurrent[peer] = max(0, self.concurrent.get(peer, 0) - 1)
 
 
 class Deny(Exception):
@@ -87,8 +157,10 @@ def validate_target(policy: GatewayPolicy, host: str, port: int) -> str:
             ip = canonical_ip(ipaddress.ip_address(ip_text))
         except ValueError as exc:
             raise Deny("target resolved to an invalid address") from exc
-        if ip.is_link_local:
-            # metadata ranges are never exemptable, allowlist or not
+        if _hard_denied(ip):
+            # AUD-EGRESS-01: cloud metadata (incl. non-link-local
+            # endpoints), link-local and unspecified ranges are never
+            # exemptable - allowlist or not
             raise Deny("target resolves to a permanently denied range")
         pinned = str(ip)
     if pinned is None:
@@ -114,8 +186,12 @@ async def handle_connection(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     policy: GatewayPolicy,
+    quotas: _Quotas | None = None,
 ) -> None:
+    quotas = quotas if quotas is not None else _Quotas()
     peer = writer.get_extra_info("peername")
+    peer_host = (peer or ("unknown",))[0]
+    admitted = False
     try:
         request_line = await asyncio.wait_for(reader.readline(), _TUNNEL_TIMEOUT_S)
         parts = request_line.split()
@@ -133,8 +209,9 @@ async def handle_connection(
             writer.write(b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
             await writer.drain()
             return
-        # drain remaining request headers
+        # drain remaining request headers (keeping Proxy-Authorization)
         total = len(request_line)
+        proxy_auth = ""
         while True:
             line = await asyncio.wait_for(reader.readline(), _TUNNEL_TIMEOUT_S)
             total += len(line)
@@ -142,6 +219,25 @@ async def handle_connection(
                 raise Deny("request headers too large")
             if line in (b"\r\n", b"\n", b""):
                 break
+            name, _, value = line.partition(b":")
+            if name.strip().lower() == b"proxy-authorization":
+                proxy_auth = value.strip().decode("ascii", "replace")
+
+        # AUD-EGRESS-03: only authenticated workloads may use the exit
+        if not policy.authenticate(proxy_auth):
+            writer.write(b"HTTP/1.1 407 Proxy Authentication Required\r\n"
+                         b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            await writer.drain()
+            logger.warning("deny peer=%s classification=unauthorized", peer)
+            return
+        denial = quotas.admit(peer_host)
+        if denial is not None:
+            writer.write(b"HTTP/1.1 429 Too Many Requests\r\n"
+                         b"Content-Length: 0\r\nConnection: close\r\n\r\n")
+            await writer.drain()
+            logger.warning("deny peer=%s classification=quota:%s", peer, denial)
+            return
+        admitted = True
 
         try:
             pinned_ip = await asyncio.to_thread(validate_target, policy, host, port)
@@ -161,9 +257,13 @@ async def handle_connection(
         writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
         await writer.drain()
         logger.info("allow peer=%s target=%s:%s via=%s", peer, host, port, pinned_ip)
-        await asyncio.gather(
-            _pipe(reader, upstream_writer),
-            _pipe(upstream_reader, writer),
+        # AUD-EGRESS-03: tunnels never outlive the duration cap
+        await asyncio.wait_for(
+            asyncio.gather(
+                _pipe(reader, upstream_writer),
+                _pipe(upstream_reader, writer),
+            ),
+            MAX_TUNNEL_SECONDS,
         )
     except TimeoutError:
         try:
@@ -174,6 +274,8 @@ async def handle_connection(
     except (ConnectionError, OSError):
         pass
     finally:
+        if admitted:
+            quotas.release(peer_host)
         try:
             writer.close()
         except OSError:
@@ -182,9 +284,10 @@ async def handle_connection(
 
 def create_server(policy: GatewayPolicy | None = None):
     policy = policy or GatewayPolicy.from_env()
+    quotas = _Quotas()
 
     async def _client_connected(reader, writer):
-        await handle_connection(reader, writer, policy)
+        await handle_connection(reader, writer, policy, quotas)
 
     return _client_connected
 

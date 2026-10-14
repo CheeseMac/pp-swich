@@ -54,6 +54,7 @@ ALLOWED_VALUE_PREFIXES = (
     "dev-token-",
     "ci-internal-token-",
     "ci-ticket-key-",
+    "ci-egress-token-",
     "dev-internal-token-synthetic",
     "CANARY_",
     "<REDACTED",

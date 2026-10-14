@@ -41,9 +41,31 @@ class NetworkPolicyViolation(Exception):
     """Raised by the validating transport at request time (fail closed)."""
 
 
+# AUD-EGRESS-01: the PERMANENT deny set is an explicit POLICY, not an
+# accident of what ipaddress flags. Cloud metadata endpoints do not all
+# live in link-local space: Alibaba ECS answers at 100.100.100.200 and
+# AWS exposes an IPv6 endpoint at fd00:ec2::254 - both must be denied
+# even when somebody mistakenly allowlists them or a resolved name.
+PERMANENTLY_DENIED_NETWORKS: tuple = tuple(
+    ipaddress.ip_network(text)
+    for text in (
+        "169.254.0.0/16",        # IPv4 link-local incl. 169.254.169.254
+        "100.100.100.200/32",    # Alibaba Cloud ECS metadata
+        "fd00:ec2::254/128",     # AWS IMDS IPv6 endpoint
+        "fe80::/10",             # IPv6 link-local
+        "0.0.0.0/8",             # "this" network / unspecified
+        "::/128",                # IPv6 unspecified
+    )
+)
+
+
 def _hard_denied(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Ranges that may never be exempted by an approved-host entry."""
-    return ip.is_link_local
+    """Targets that may NEVER be exempted by any approval or allowlist."""
+    if ip.is_link_local:
+        return True
+    if ip.is_unspecified:
+        return True
+    return any(ip in network for network in PERMANENTLY_DENIED_NETWORKS)
 
 
 def _soft_denied(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
