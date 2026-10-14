@@ -57,6 +57,11 @@ class ControlSettings(BaseModel):
     ).lower() in ("1", "true", "yes")
     # Fernet key (urlsafe base64 of 32 bytes); empty = plaintext column
     result_encryption_key: str = os.environ.get("PP_SWITCH_RESULT_ENCRYPTION_KEY", "")
+    # DATA-17: comma-separated PREVIOUS keys kept as a read-only window
+    # during rotation; writes always use result_encryption_key
+    result_previous_keys: str = os.environ.get(
+        "PP_SWITCH_RESULT_ENCRYPTION_PREVIOUS_KEYS", ""
+    )
 
     @property
     def effective_delegation_key(self) -> str:

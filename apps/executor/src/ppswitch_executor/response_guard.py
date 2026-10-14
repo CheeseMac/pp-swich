@@ -105,23 +105,63 @@ def _scrub(value: Any, dropped: _Dropped, depth: int = 0) -> Any:
     return value
 
 
+# composition keywords without a value-driven branch selection stay
+# uninterpretable: the guard is schema-driven and must not guess
+_UNSUPPORTED_COMPOSITION = ("$ref", "oneOf", "anyOf", "not")
+
+
+def _normalized_schema(schema: Any) -> dict[str, Any] | None:
+    """PR-NET-13 (bounded): resolve interpretable schema constructs.
+
+    Returns a plain interpretable schema dict, or None when the schema is
+    uninterpretable (unresolved references, value-driven compositions,
+    unsupported allOf shapes) - the caller then denies the value.
+    """
+    if not isinstance(schema, dict):
+        return {}
+    if any(keyword in schema for keyword in _UNSUPPORTED_COMPOSITION):
+        return None
+    if "allOf" not in schema:
+        return schema
+    # allOf is supported ONLY as a full merge of plain object branches
+    # ({type: object, properties, required}); anything richer (nested
+    # composition, extra sibling keys, non-object branches) stays denied
+    branches = schema.get("allOf")
+    if (
+        isinstance(branches, list)
+        and branches
+        and "properties" not in schema
+        and "type" not in schema
+        and all(
+            isinstance(b, dict)
+            and not any(keyword in b for keyword in _UNSUPPORTED_COMPOSITION)
+            and "allOf" not in b
+            and b.get("type", "object") == "object"
+            and isinstance(b.get("properties"), dict)
+            and set(b) <= {"type", "properties", "required"}
+            for b in branches
+        )
+    ):
+        merged: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+        for branch in branches:
+            merged["properties"].update(branch["properties"])
+            merged["required"].extend(branch.get("required") or [])
+        merged["required"] = sorted(set(merged["required"]))
+        return merged
+    return None
+
+
 def _project(value: Any, schema: dict[str, Any], dropped: _Dropped, depth: int = 0) -> Any:
     """Recursive schema-driven whitelist projection (default-deny)."""
     if depth > MAX_DEPTH:
         raise ApiError(ErrorCode.UPSTREAM_FAILURE, "Upstream payload nesting too deep")
-    if not isinstance(schema, dict):
-        schema = {}
-
-    # SEC-048 + review5 PR-NET-13: an unresolved reference or an
-    # uninterpreted composition keyword is not an interpretable schema -
-    # no value (object, array or scalar) may pass through it. Composition
-    # support arrives with PR-NET-13's bounded resolver; until then these
-    # schemas fail closed.
-    if "$ref" in schema or any(
-        keyword in schema for keyword in ("allOf", "oneOf", "anyOf", "not")
-    ):
+    normalized = _normalized_schema(schema)
+    if normalized is None:
+        # SEC-048 + PR-NET-13: unresolved references and value-driven
+        # compositions never gain a lenient path; unsupported allOf too
         dropped.add("<uninterpretable_schema>")
         return None
+    schema = normalized
 
     expected = schema.get("type")
 
@@ -165,16 +205,13 @@ def _project(value: Any, schema: dict[str, Any], dropped: _Dropped, depth: int =
         # An items schema that is an unresolved reference (``$ref``) or that
         # declares neither ``type`` nor ``properties`` is equally unusable.
         raw_items = schema.get("items")
-        usable = isinstance(raw_items, dict) and not any(
-            keyword in raw_items
-            for keyword in ("$ref", "allOf", "oneOf", "anyOf", "not")
-        ) and (
-            raw_items.get("type") is not None or raw_items.get("properties")
-        )
-        if not usable:
+        items_schema = _normalized_schema(raw_items)
+        if items_schema is None or not (
+            items_schema.get("type") is not None
+            or items_schema.get("properties")
+        ):
             dropped.add("<items_unspecified>")
             return None
-        items_schema: dict[str, Any] = raw_items  # type: ignore[assignment]
         projected = [
             _project(item, items_schema, dropped, depth + 1)
             for item in value[:MAX_ARRAY_ITEMS]
@@ -199,24 +236,24 @@ def project_response(
         )
     dropped = _Dropped()
     schema: dict[str, Any] = dict(output_schema or {})
-    schema_properties = schema.get("properties")
 
-    # SEC-051 (review4) + review5 PR-NET-13: a reviewed schema that is
-    # itself an unresolved reference or an uninterpreted composition
-    # declares nothing projectable - refuse BEFORE any fallback path could
-    # run, so a root "$ref"/"oneOf"/... can never reach the lenient
-    # allow_fields+scrub compatibility branch
-    if schema and any(
-        keyword in schema
-        for keyword in ("$ref", "allOf", "oneOf", "anyOf", "not")
-    ):
+    # SEC-051 + PR-NET-13: the ROOT schema passes through the same
+    # bounded normalizer - a supported allOf merge proceeds (and REPLACES
+    # the original from here on, so merges never fall into the legacy
+    # branch), while unresolved references and value-driven compositions
+    # are refused BEFORE any fallback path could run
+    normalized_root = _normalized_schema(schema)
+    if schema and normalized_root is None:
         raise ApiError(
             ErrorCode.UPSTREAM_FAILURE,
             "Capability output schema is not interpretable "
             "(unresolved reference or composition); refusing to project",
             {"reason": "root_schema_not_interpretable"},
         )
+    if normalized_root:
+        schema = normalized_root
 
+    schema_properties = schema.get("properties")
     if isinstance(schema_properties, dict) and schema_properties:
         # P0-4: one authoritative allow set - when the reviewed schema and
         # allow_fields are both present the INTERSECTION governs the top

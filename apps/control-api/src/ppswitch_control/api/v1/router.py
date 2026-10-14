@@ -1376,11 +1376,13 @@ def purge_results(
     auth: AuthContext = Depends(require_permission("results.purge")),
     session: Session = Depends(get_session),
 ):
-    """Destroy result payloads past their retention deadline (metadata
-    survives). Runs automatically at startup; exposed for scheduled jobs."""
+    """Destroy expired result payloads in THIS workspace (metadata
+    survives). The unscoped global sweep is the internal startup job
+    only (DATA-16: tenant-scoped admin, global = maintenance identity).
+    """
     from ppswitch_control.services.result_read import purge_expired_results
 
-    purged = purge_expired_results(session)
+    purged = purge_expired_results(session, workspace_id=auth.workspace_id)
     session.add(
         AuditEventRow(
             workspace_id=auth.workspace_id, actor_id=auth.principal_id,
@@ -1389,6 +1391,29 @@ def purge_results(
         )
     )
     return ok(request, {"purged": purged})
+
+
+@router.post("/admin/re-encrypt-results")
+def reencrypt_results_route(
+    request: Request,
+    auth: AuthContext = Depends(require_permission("results.purge")),
+    session: Session = Depends(get_session),
+):
+    """DATA-17 key rotation: re-encrypt this workspace's stored results
+    under the current primary key (previous keys stay as read window)."""
+    from ppswitch_control.services.result_read import reencrypt_results
+
+    stats = reencrypt_results(
+        session, request.app.state.settings, workspace_id=auth.workspace_id
+    )
+    session.add(
+        AuditEventRow(
+            workspace_id=auth.workspace_id, actor_id=auth.principal_id,
+            action="results.reencrypt", decision="allowed",
+            redacted_metadata=stats,
+        )
+    )
+    return ok(request, stats)
 
 
 # ---------------------------------------------------------------------------

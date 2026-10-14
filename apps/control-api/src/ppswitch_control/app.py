@@ -90,13 +90,20 @@ def create_app(
     app.state.engine = engine
     # PR-DATA-12: expired result payloads are wiped at every startup (the
     # admin endpoint covers scheduled runs between restarts)
-    import contextlib
+    import logging
 
-    with contextlib.suppress(Exception):  # never block boot on housekeeping
+    # DATA-16: a failed startup sweep must be visible - expired
+    # ciphertext would otherwise linger while reads already refuse it
+    try:
         from ppswitch_control.services.result_read import purge_expired_results
 
         with session_factory() as session:
             purge_expired_results(session)
+        logging.getLogger("ppswitch.control.results").info("startup purge complete")
+    except Exception as exc:  # never block boot on housekeeping
+        logging.getLogger("ppswitch.control.results").warning(
+            "startup purge FAILED - expired payloads remain stored: %r", exc
+        )
     # internal control->executor channel never uses ambient system proxies
     app.state.executor_client = executor_client or httpx.Client(
         follow_redirects=False, timeout=30.0, trust_env=False

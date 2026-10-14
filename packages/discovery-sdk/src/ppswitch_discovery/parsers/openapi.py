@@ -25,6 +25,61 @@ from ppswitch_discovery.parsers.har import CandidateOperation, DiscoveryImportRe
 _PATH_PARAM = re.compile(r"\{([^}]+)\}")
 _METHODS = {"get", "post", "put", "patch", "delete", "head", "options"}
 
+# PR-NET-13: bounded LOCAL $ref resolution. Rules:
+# - only "#/..." document-local pointers resolve; external/URL refs never
+#   dereference (no network, ever);
+# - resolution depth is capped and cycles abort (the operation falls to
+#   needs_review instead of looping);
+# - anything unresolvable marks the candidate needs_review rather than
+#   silently storing a broken contract.
+_MAX_REF_DEPTH = 8
+
+
+def _json_pointer(root: Any, pointer: str) -> Any:
+    node = root
+    for part in pointer.split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        elif isinstance(node, list) and part.isdigit() and int(part) < len(node):
+            node = node[int(part)]
+        else:
+            return None
+    return node
+
+
+def resolve_local_refs(node: Any, root: Any, stack: frozenset, depth: int = 0):
+    """Resolve local ``$ref`` nodes in-place-safe. Returns (resolved, ok)."""
+    if depth > _MAX_REF_DEPTH:
+        return None, False
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str):
+            if not ref.startswith("#/"):
+                return None, False  # external reference: never dereferenced
+            if ref in stack:
+                return None, False  # cycle
+            target = _json_pointer(root, ref[2:])
+            if target is None:
+                return None, False
+            return resolve_local_refs(target, root, stack | {ref}, depth + 1)
+        out: dict[str, Any] = {}
+        for key, value in node.items():
+            resolved, ok = resolve_local_refs(value, root, stack, depth)
+            if not ok:
+                return None, False
+            out[key] = resolved
+        return out, True
+    if isinstance(node, list):
+        resolved_items: list[Any] = []
+        for item in node:
+            resolved, ok = resolve_local_refs(item, root, stack, depth)
+            if not ok:
+                return None, False
+            resolved_items.append(resolved)
+        return resolved_items, True
+    return node, True
+
 # annotation keys that may carry real credential-shaped values; never stored
 _STRIPPED_ANNOTATIONS = frozenset(
     {"example", "examples", "default", "const", "x-example", "x-default", "x-examples"}
@@ -134,7 +189,12 @@ def build_candidates_from_openapi(document: dict[str, Any]) -> DiscoveryImportRe
                 continue
             result.entry_count += 1
             template = "/" + path.strip("/")
-            params = operation.get("parameters") or []
+            # PR-NET-13: resolve local $ref BEFORE extraction; an
+            # unresolvable operation keeps default (empty) contracts and
+            # goes to needs_review - never a silently broken schema
+            resolved, refs_ok = resolve_local_refs(operation, document, frozenset())
+            resolved = resolved if isinstance(resolved, dict) else {}
+            params = resolved.get("parameters") or []
             path_params = _PATH_PARAM.findall(template)
             query_keys = sorted(
                 str(p.get("name", ""))
@@ -153,10 +213,10 @@ def build_candidates_from_openapi(document: dict[str, Any]) -> DiscoveryImportRe
                         "path": _parameter_schema(params, "path"),
                         "query": _parameter_schema(params, "query"),
                     },
-                    output_schema=_response_schema(operation),
+                    output_schema=_response_schema(resolved) if refs_ok else {},
                     sample_count=1,
                     status_codes=[200],
-                    needs_review=False,
+                    needs_review=not refs_ok,
                     source="openapi",
                 )
             )

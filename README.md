@@ -6,7 +6,7 @@
 >
 > 通用 API 发现、连接切换、凭证保护与 Agent 安全能力平台。
 
-**项目状态：Pre-alpha —— 五轮评审安全加固 + PR-DATA-12 数据生命周期完成（2026-10-14）**  
+**项目状态：Pre-alpha —— 六轮评审加固 + PR-DATA-12/PR-NET-13 完成（2026-10-14）**  
 **本仓库启动文档版本：v0.1.0，2026-10-13**  
 **品牌名称：`pp switch`；仓库 / 包名称：`pp-switch`。**
 
@@ -31,6 +31,7 @@
 - 安全加固第三轮 v0.1.3（复审后）：幂等回放绑定委托用户（共享 Agent 不能跨用户复用缓存结果）、Capability required_scopes 显式授权链（空链不满足 scoped 能力）、Agent 目录公共视图（仅 published 版本、无内部 execution/allow_fields、过期 grant 剔除）、签名式 Delegation Context 票据取代参数选身份（ADR-005）、高风险审批与 Endpoint 审批提升至 reviewer 角色、响应守卫拒绝无 items 数组与未解析 $ref、endpoint 默认强制 HTTPS、手动创建 Capability 过导入级元数据清洗（对应回归测试 SEC-043…048 与共享 Agent 综合攻击场景）
 - 安全加固第四轮 v0.1.3.1（复审后）：幂等回放前重验完整 scope 链与 connection 存活（授权缩小/撤销后缓存不可再取）、Agent 历史查询强制委托票据并按委托用户过滤（撤销即刻生效）、输出 Schema 根节点 $ref 一律拒绝、委托票据生产强制独立签名密钥（ADR-005 修订/ADR-007）（对应回归测试 SEC-049…051 与撤销不变量四路径）
 - 数据生命周期 PR-DATA-12（第五轮批准后）：调用结果存储前数据分级（high/critical 默认 metadata-only）、保留期 TTL（过期读取为空）、Fernet 静态加密（生产强制密钥）、启动自动清理 + admin 清理 API；历史读取按记录重校验完整授权链（缩小未撤销同样不可读，SEC-052）；委托授权代际 generation 使撤销→重授权后的旧票据立即失效（SEC-053）；allOf/oneOf/anyOf 组合 schema 在受限解析器落地前一律 fail-closed（ADR-008：结果读取单一出口）
+- 生产就绪与受限解析（第六轮）：升级时清空存量明文结果（迁移 f3a62c8e1b47 + 运行时无期限明文兜底清扫）、结果清理按 Workspace 隔离（全局清扫仅限内部启动任务）且启动失败告警、Fernet 密钥轮换读写窗口（MultiFernet）+ 租户内重加密 API + 解密失败日志分类（DATA-15..17）；OpenAPI 本地 $ref 有界解析（外部引用不解引用、循环/深度上限、失败进人工审核）与响应守卫 allOf 纯对象分支受限合并（PR-NET-13，ADR-009）
 
 **计划中、尚未实现（请勿当作已有能力）：**
 
@@ -64,7 +65,7 @@ uv run python scripts/seed-demo.py
 #    -> Invocations 调用并观察数据集随档案切换
 ```
 
-测试：`uv run pytest`（217 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）；检查：`uv run ruff check . && uv run mypy packages apps`。
+测试：`uv run pytest`（226 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）；检查：`uv run ruff check . && uv run mypy packages apps`。
 
 ## 解决什么问题
 
@@ -128,6 +129,7 @@ uv run python scripts/seed-demo.py
 | **第三轮复审回复与 v0.1.3 加固记录** | **[23-REVIEW-RESPONSE-3](docs/23-REVIEW-RESPONSE-3.md)** |
 | **第四轮复审回复与撤销不变量补丁** | **[24-REVIEW-RESPONSE-4](docs/24-REVIEW-RESPONSE-4.md)** |
 | **第五轮复审回复与 PR-DATA-12 记录** | **[25-REVIEW-RESPONSE-5](docs/25-REVIEW-RESPONSE-5.md)** |
+| **第六轮复审回复与 PR-NET-13 记录** | **[26-REVIEW-RESPONSE-6](docs/26-REVIEW-RESPONSE-6.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 
