@@ -237,7 +237,9 @@ step "QA-DEP-03: refusals verified against audit logs (not just errors)"
 docker compose exec -T executor python - <<'PY' || true
 import httpx
 
-client = httpx.Client(proxy="http://egress-gateway:8914", timeout=8.0, trust_env=False)
+import os
+    authed = "http://workload:" + os.environ["EGRESS_PROXY_TOKEN"] + "@egress-gateway:8914"
+    client = httpx.Client(proxy=authed, timeout=8.0, trust_env=False)
 try:
     client.get("https://example.com/status/200")
     raise SystemExit("FAIL: unapproved host reachable")
