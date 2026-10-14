@@ -238,8 +238,11 @@ docker compose exec -T executor python - <<'PY' || true
 import httpx
 
 import os
+from urllib.parse import urlparse
 
-authed = "http://workload:" + os.environ["EGRESS_PROXY_TOKEN"] + "@egress-gateway:8914"
+# the executor env carries the token inside the proxy URL
+_parts = urlparse(os.environ["PP_SWITCH_EGRESS_PROXY"])
+authed = f"http://workload:{_parts.password}@{_parts.hostname}:{_parts.port}"
 client = httpx.Client(proxy=authed, timeout=8.0, trust_env=False)
 try:
     client.get("https://example.com/status/200")
