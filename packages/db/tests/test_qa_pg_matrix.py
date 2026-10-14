@@ -58,23 +58,56 @@ class TestQAPG01LegacyWipeOnUpgrade:
         upgrade(PRE_WIPE_REVISION)
         engine = create_engine(url)
         with engine.begin() as conn:
-            # minimal parent rows so the invocation FKs hold
+            # full parent chain via raw SQL: FKs are ENFORCED on PG
+            # (SQLite tolerates dangling references) - QA-PG-01 checks
+            # exactly this integrity across the wipe upgrade
+            ws = "11111111-1111-1111-1111-111111111111"
+            svc = "12121212-1212-1212-1212-121212121212"
+            op = "13131313-1313-1313-1313-131313131313"
+            opv = "44444444-4444-4444-4444-444444444444"
+            cap = "22222222-2222-2222-2222-222222222222"
+            capv = "33333333-3333-3333-3333-333333333333"
             conn.execute(
                 text(
                     "INSERT INTO workspaces (id, slug, name, kind, created_at) "
-                    "VALUES (:w, 'qa-pg-01', 'QA', 'personal', CURRENT_TIMESTAMP)"
+                    "VALUES (:id, 'qa-pg-01', 'QA', 'personal', CURRENT_TIMESTAMP)"
                 ),
-                {"w": "11111111-1111-1111-1111-111111111111"},
+                {"id": ws},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO services (id, workspace_id, slug, name, "
+                    "visibility, owner_principal_id, created_at) "
+                    "VALUES (:id, :w, 'qa-svc', 'QA', 'private', "
+                    ":owner, CURRENT_TIMESTAMP)"
+                ),
+                {"id": svc, "w": ws, "owner": "16161616-1616-1616-1616-161616161616"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO operations (id, workspace_id, service_id, "
+                    "method, normalized_path, fingerprint, status, created_at) "
+                    "VALUES (:id, :w, :s, 'GET', '/qa', 'qa-fp', 'observed', "
+                    "CURRENT_TIMESTAMP)"
+                ),
+                {"id": op, "w": ws, "s": svc},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO operation_versions (id, operation_id, version, "
+                    "input_schema, output_schema, contract_hash, created_at) "
+                    "VALUES (:id, :op, 1, '{}', '{}', 'h', CURRENT_TIMESTAMP)"
+                ),
+                {"id": opv, "op": op},
             )
             conn.execute(
                 text(
                     "INSERT INTO capabilities (id, workspace_id, name, "
                     "display_name, description, visibility, status, created_at) "
-                    "VALUES (:c, :w, 'qa.cap', 'QA', '', 'private', 'draft', "
+                    "VALUES (:id, :w, 'qa.cap', 'QA', '', 'private', 'draft', "
                     "CURRENT_TIMESTAMP)"
                 ),
-                {"c": "22222222-2222-2222-2222-222222222222",
-                 "w": "11111111-1111-1111-1111-111111111111"},
+                {"id": cap, "w": ws},
             )
             conn.execute(
                 text(
@@ -82,12 +115,10 @@ class TestQAPG01LegacyWipeOnUpgrade:
                     "operation_version_id, version, risk_level, input_schema, "
                     "output_schema, allow_fields, execution, required_scopes, "
                     "policy_ref, status, content_hash, created_at) VALUES "
-                    "(:v, :c, :o, '0.1.0', 'low', '{}', '{}', '[]', '{}', '[]', "
+                    "(:id, :c, :o, '0.1.0', 'low', '{}', '{}', '[]', '{}', '[]', "
                     "'policy-v1', 'draft', 'h', CURRENT_TIMESTAMP)"
                 ),
-                {"v": "33333333-3333-3333-3333-333333333333",
-                 "c": "22222222-2222-2222-2222-222222222222",
-                 "o": "44444444-4444-4444-4444-444444444444"},
+                {"id": capv, "c": cap, "o": opv},
             )
             conn.execute(
                 text(
@@ -101,8 +132,7 @@ class TestQAPG01LegacyWipeOnUpgrade:
                     "CURRENT_TIMESTAMP)"
                 ),
                 {"i": "55555555-5555-5555-5555-555555555555",
-                 "w": "11111111-1111-1111-1111-111111111111",
-                 "v": "33333333-3333-3333-3333-333333333333",
+                 "w": ws, "v": capv,
                  "p": "66666666-6666-6666-6666-666666666666"},
             )
 

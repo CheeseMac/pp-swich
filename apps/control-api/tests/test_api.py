@@ -6,7 +6,6 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy import text
 
 AGENT_TOKEN = "dev-token-agent-helper-c2d5"
 ALICE_TOKEN = "dev-token-alice-4f81"
@@ -47,9 +46,12 @@ class TestScenario1UnsanitizedHar:
         assert "CANARY_NOT_REAL_ABC123" not in response.text
 
         with demo.harness.session_factory() as session:
-            blob = session.execute(
-                text("SELECT group_concat(normalized_shape) FROM observations")
-            ).scalar() or ""
+            from ppswitch_db.models import ObservationRow
+
+            blob = "".join(
+                str(row.normalized_shape)
+                for row in session.query(ObservationRow).all()
+            )
             assert "CANARY" not in blob
 
 
