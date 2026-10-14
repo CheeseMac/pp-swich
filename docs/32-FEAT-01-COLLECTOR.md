@@ -2,7 +2,7 @@
 
 > 功能冲刺第一枪。评审方式已按用户 2026-10-14 的决定调整：验收优先看
 > 实际功能演示与隐私/凭证边界，不再以测试数量为主要指标。
-> 状态：**代码合入 main，全量本地门禁绿（304 项测试），CI 待跑。**
+> 状态：**已合入 main（`9e4f772`），304 项测试全绿，CI 双工作流全绿。**
 
 ## 0. 一句话
 
@@ -127,6 +127,18 @@ manifest 中追加对应 origin。
 | 演示 | `demo-collector-flow.py` 真实栈全链路（本文 §1） |
 
 合计 304 项测试全绿：Python 279（原 255 基线 + 新增 24）+ vitest 25。
+
+### CI 迭代记录（如实）
+
+- 首跑（`d207673`）PG 矩阵腿挂：`sorry, too many clients already`——
+  control-api harness 每测试建 engine 从不释放，套件长到 279 项后越过
+  PG 服务容器 max_connections（交接坑 #7 的 PG 系列又添一员）；
+- 第二跑（`00fe7ed`）修了 harness engine 的 dispose，仍剩 2 个 e2e 用例
+  挂：`create_app()` 在应用内部对同一测试库还建了**第二个** engine，
+  泄漏照旧；PG job 只跑 db+control-api+e2e 三个目录，77 个测试 × 每
+  测试 ~1 连接 ≈ 恰好压线；
+- 第三跑（`9e4f772`）两个 engine 都在 teardown 释放后**双工作流全绿**
+  （CI 五 job + Security gates）。
 
 ## 6. 诚实的边界（没做的事）
 
