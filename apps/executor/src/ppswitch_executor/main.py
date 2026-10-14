@@ -154,11 +154,24 @@ def create_app(
                 )
             adapter = state.mock_adapter
         else:
-            check = network_checker(
-                _join_url(plan.endpoint_base_url, plan.operation.path_template),
-                plan.approved_hosts,
-            )
-            del check  # policy side effect: raises on violation
+            # policy side effect: raises on violation. GATEWAY MODE uses the
+            # URL-level check only - the isolated executor cannot resolve
+            # external names; the egress gateway owns resolution + IP policy
+            from ppswitch_executor.network_policy import check_url_policy
+
+            if state.settings.egress_proxy_url:
+                check_url_policy(
+                    _join_url(plan.endpoint_base_url,
+                              plan.operation.path_template),
+                    plan.approved_hosts,
+                )
+            else:
+                check = network_checker(
+                    _join_url(plan.endpoint_base_url,
+                              plan.operation.path_template),
+                    plan.approved_hosts,
+                )
+                del check
             adapter = state.http_adapter  # type: ignore[assignment]
 
         try:
