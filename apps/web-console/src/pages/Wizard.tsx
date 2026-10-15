@@ -5,10 +5,10 @@ import type {
   Operation,
   OperationDetail,
   OperationTestResult,
-  Principal,
   Service,
 } from "../types";
 import { Button, Card, Empty, ErrorNote, Field, StatusBadge } from "../ui";
+import { AgentAccessCard } from "../components/AgentAccessCard";
 
 /**
  * FEAT-02 publish wizard: discovered operation -> agent-callable tool,
@@ -73,10 +73,7 @@ export function WizardPage({ seedOperationId, clearSeed }: {
   const [testResult, setTestResult] = useState<OperationTestResult | null>(null);
   const [publishVersion, setPublishVersion] = useState("1.0.0");
   const [evidence, setEvidence] = useState("verified against provider docs in console wizard");
-  const [agents, setAgents] = useState<Principal[]>([]);
-  const [agentId, setAgentId] = useState("");
-  const [grantScopes, setGrantScopes] = useState("");
-  const [grantDone, setGrantDone] = useState<string | null>(null);
+  const [showSelection, setShowSelection] = useState(false);
 
   const load = useCallback(() => {
     api.get<Service[]>("/api/v1/services")
@@ -86,18 +83,16 @@ export function WizardPage({ seedOperationId, clearSeed }: {
   }, []);
   useEffect(load, []);
 
-  useEffect(() => {
-    // demo-mode agent directory for the grant step (production uses OIDC)
-    api.get<Principal[]>("/api/v1/dev/principals")
-      .then((rows) => setAgents(rows.filter((p) => p.kind === "agent")))
-      .catch(() => setAgents([]));
-  }, []);
+  const pickOperation = (id: string) => {
+    setShowSelection(false);
+    if (detail && detail.id === id) return; // keep the configured form
+    void selectOperation(id);
+  };
 
   const selectOperation = useCallback(async (id: string) => {
     setError(null);
     setTestResult(null);
     setCapability(null);
-    setGrantDone(null);
     try {
       const op = await api.get<OperationDetail>(`/api/v1/operations/${id}`);
       setDetail(op);
@@ -129,7 +124,7 @@ export function WizardPage({ seedOperationId, clearSeed }: {
     } catch (e) {
       setError(e);
     }
-  }, [operations, serviceById]);
+  }, [operations, serviceById]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (seedOperationId) {
@@ -248,24 +243,6 @@ export function WizardPage({ seedOperationId, clearSeed }: {
     }
   };
 
-  const grantAgent = async () => {
-    if (!capability || !agentId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.post("/api/v1/agent-grants", {
-        agent_principal_id: agentId,
-        capability_id: capability.id,
-        scopes: grantScopes.split(",").map((s) => s.trim()).filter(Boolean),
-      });
-      setGrantDone(capability.name);
-    } catch (e) {
-      setError(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div>
       <h1>发布向导</h1>
@@ -277,7 +254,7 @@ export function WizardPage({ seedOperationId, clearSeed }: {
       <ErrorNote error={error} />
       <p className="muted">当前步骤：{capability ? (capability.status === "published" ? "5 发布完成" : "4 审核发布") : detail ? "3 试调" : "1 选择"}</p>
 
-      {!detail && (
+      {(!detail || showSelection) && (
         <Card title={`1 · 选择候选操作 (${operations.length})`}>
           {operations.length === 0 ? (
             <Empty>还没有发现任何操作 —— 先去 Discovery 页导入或采集。</Empty>
@@ -300,8 +277,8 @@ export function WizardPage({ seedOperationId, clearSeed }: {
                     <td>{serviceById[op.service_id]?.slug ?? "?"}</td>
                     <td><StatusBadge status={op.status} /></td>
                     <td>
-                      <Button variant="ghost" onClick={() => void selectOperation(op.id)}>
-                        发布为工具
+                      <Button variant="ghost" onClick={() => pickOperation(op.id)}>
+                        {detail?.id === op.id ? "继续配置" : "发布为工具"}
                       </Button>
                     </td>
                   </tr>
@@ -408,8 +385,8 @@ export function WizardPage({ seedOperationId, clearSeed }: {
               <Button onClick={createDraft} disabled={busy || !toolName.includes(".")}>
                 创建草稿
               </Button>
-              <Button variant="ghost" onClick={() => { setDetail(null); setCapability(null); }}>
-                返回选择
+              <Button variant="ghost" onClick={() => setShowSelection(true)}>
+                重新选择操作
               </Button>
             </div>
           </Card>
@@ -456,6 +433,10 @@ export function WizardPage({ seedOperationId, clearSeed }: {
 
       {capability && (
         <Card title={`4 · 审核与发布 · ${capability.name}`}>
+          <p className="muted" style={{ marginTop: 0 }}>
+            需要修改配置？点「重新选择操作」调整表单后重新创建草稿（旧草稿在
+            Capabilities 页可见）。已发布版本不可变，改动需发布新版本。
+          </p>
           <p>
             状态：<StatusBadge status={capability.status} />
             {capability.versions.length > 0 && (
@@ -502,30 +483,14 @@ export function WizardPage({ seedOperationId, clearSeed }: {
       )}
 
       {capability?.status === "published" && (
-        <Card title="5 · 授权 Agent（可选）">
-          <p className="muted" style={{ marginTop: 0 }}>
-            选择要授权的 Agent 并授予权限。MCP 客户端的一键接入配置生成是 FEAT-05。
-          </p>
-          <div className="form-row">
-            <Field label="agent">
-              <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-                <option value="">select...</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.display_name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="scopes（逗号分隔，可空）">
-              <input value={grantScopes} onChange={(e) => setGrantScopes(e.target.value)} />
-            </Field>
-            <Button onClick={grantAgent} disabled={busy || !agentId}>
-              授权
-            </Button>
-          </div>
-          {grantDone && (
-            <p className="muted">已授权 {grantDone}。Agent 现在可以在其工具清单中看到并调用它。</p>
-          )}
-        </Card>
+        <>
+          <Card title="5 · 接入 Agent">
+            <p className="muted" style={{ marginTop: 0 }}>
+              发布完成——现在把这个工具安全开放给你的 Agent（一键生成 MCP 配置）：
+            </p>
+            <AgentAccessCard preselectedCapabilityId={capability.id} />
+          </Card>
+        </>
       )}
     </div>
   );

@@ -4,6 +4,7 @@ import { Login } from "./pages/Login";
 import { ServicesPage } from "./pages/Services";
 import { DiscoveryPage } from "./pages/Discovery";
 import { WizardPage } from "./pages/Wizard";
+import { AgentAccessPage } from "./pages/AgentAccess";
 import { CapabilitiesPage } from "./pages/Capabilities";
 import { ConnectionsPage } from "./pages/Connections";
 import { ProfilesPage } from "./pages/Profiles";
@@ -16,6 +17,7 @@ const PAGES = [
   { id: "services", label: "Services" },
   { id: "discovery", label: "Discovery" },
   { id: "wizard", label: "发布向导" },
+  { id: "agent-access", label: "Agent 接入" },
   { id: "capabilities", label: "Capabilities" },
   { id: "connections", label: "Connections" },
   { id: "profiles", label: "Profiles" },
@@ -96,6 +98,7 @@ export function App() {
         {page === "wizard" && (
           <WizardPage seedOperationId={wizardSeed} clearSeed={() => setWizardSeed(null)} />
         )}
+        {page === "agent-access" && <AgentAccessPage />}
         {page === "capabilities" && <CapabilitiesPage />}
         {page === "connections" && <ConnectionsPage />}
         {page === "profiles" && <ProfilesPage />}

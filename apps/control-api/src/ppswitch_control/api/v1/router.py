@@ -46,6 +46,10 @@ from ppswitch_control.auth import (
     require_permission,
 )
 from ppswitch_control.envelope import ok
+from ppswitch_control.services.agent_principal_service import (
+    create_agent_principal,
+    list_agent_principals,
+)
 from ppswitch_control.services.capability_service import (
     create_capability,
     publish_capability,
@@ -214,6 +218,12 @@ class OperationTestRequest(BaseModel):
     """FEAT-02 wizard: sample arguments for a live operation test."""
 
     arguments: dict = Field(default_factory=dict)
+
+
+class AgentPrincipalCreate(BaseModel):
+    """FEAT-05: onboard an external agent (Claude/Cursor/custom)."""
+
+    display_name: str = Field(min_length=1, max_length=128)
 
 
 class CollectorPairRequest(BaseModel):
@@ -1596,6 +1606,32 @@ def reencrypt_results_route(
 # ---------------------------------------------------------------------------
 # agent grants + dev principal directory (demo only)
 # ---------------------------------------------------------------------------
+
+
+@router.post("/agent-principals")
+def create_agent_principal_route(
+    payload: AgentPrincipalCreate,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("agent_principals.write")),
+    session: Session = Depends(get_session),
+):
+    """Create an agent identity; the token is returned exactly once."""
+    result = create_agent_principal(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        display_name=payload.display_name,
+    )
+    return ok(request, result, 201)
+
+
+@router.get("/agent-principals")
+def list_agent_principals_route(
+    request: Request,
+    auth: AuthContext = Depends(require_permission("agent_principals.read")),
+    session: Session = Depends(get_session),
+):
+    return ok(request, list_agent_principals(session, workspace_id=auth.workspace_id))
 
 
 @router.post("/agent-grants")

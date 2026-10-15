@@ -133,6 +133,8 @@ ACTION_MIN_ROLE: dict[str, int] = {
                              # the reviewer role (business-resource
                              # approvers arrive with RBAC deepening)
     "agent_grants.write": 2,    # granting is an admin action
+    "agent_principals.write": 2,  # FEAT-05: minting agent identities
+    "agent_principals.read": 2,   # FEAT-05: agent directory (no tokens)
     "audit.read": 2,            # workspace-wide audit trail: admins only
     "results.purge": 2,         # PR-DATA-12: retention destruction is admin
 }
