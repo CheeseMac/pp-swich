@@ -153,6 +153,36 @@ describe("CollectorEngine", () => {
     expect(engine.observations).toHaveLength(0);
   });
 
+  it("drops third-party origins when an allowedOrigins scope is set", async () => {
+    const engine = new CollectorEngine({
+      allowedOrigins: new Set(["https://crm.test"]),
+    });
+    for (const [id, url] of [
+      ["own", "https://crm.test/api/orders"],
+      ["tracker", "https://analytics.vendor.test/collect"],
+      ["cdn", "https://static.vendor.test/api/config.json"],
+    ] as const) {
+      engine.onRequestWillBeSent(id, {
+        request: { url, method: "GET" },
+        type: "XHR",
+      });
+      engine.onResponseReceived(id, {
+        response: { status: 200, mimeType: "application/json" },
+        type: "XHR",
+      });
+      const observation = await engine.onLoadingFinished(id, () =>
+        Promise.resolve(jsonResponse({ a: 1 })),
+      );
+      if (id === "own") {
+        expect(observation).not.toBeNull();
+      } else {
+        expect(observation).toBeNull();
+      }
+    }
+    expect(engine.observations).toHaveLength(1);
+    expect(engine.observations[0].url).toBe("https://crm.test/api/orders");
+  });
+
   it("never collects the control-plane origin", async () => {
     const engine = new CollectorEngine({
       excludedOrigins: new Set(["http://127.0.0.1:8911"]),

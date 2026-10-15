@@ -1,49 +1,36 @@
-/** MV3 service worker: capture orchestration + submission.
+/** MV3 service worker: chrome.* wiring around CollectorRuntime.
+ *
+ * All lifecycle logic (token persistence, buffer sync, auto-flush,
+ * SW-restart recovery) lives in runtime.ts and is unit-tested there.
+ * This file only: message API for the popup, CDP event plumbing,
+ * debugger/tab lifecycle handling.
  *
  * Message API (popup -> SW, chrome.runtime.sendMessage):
- *   getState          -> { state, detachedWarning }
+ *   getState          -> { state }   (never contains the collector token)
  *   setServer {url}   -> { state }
- *   pair {code}       -> { state }   (pairs against state.serverUrl)
+ *   pair {code}       -> { state }
  *   unpair            -> { state }
- *   start {tabId}     -> { state }   (attach debugger to ONE tab)
+ *   start {tabId}     -> { state }   (attach debugger to ONE tab; scope
+ *                                     collection to that tab's origin)
  *   stop              -> { state }   (detach; buffer is kept)
  *   clearBuffer       -> { state }
- *   submit            -> { state }   (upload buffered observations)
+ *   submit            -> { state }
  *   preview           -> { candidates }
  */
 
-import { CollectorEngine } from "./engine.js";
+import { CollectorRuntime } from "./runtime.js";
 import { SessionStore } from "./store.js";
-import { pair, submitObservations } from "../shared/api.js";
-import type { CandidatePreview, CollectorState, Observation } from "../shared/types.js";
+import type { CandidatePreview } from "../shared/types.js";
 import * as cdp from "./cdp.js";
 
-const AUTO_FLUSH_THRESHOLD = 50;
-const SUBMIT_BATCH = 200; // server-side cap (PP_SWITCH_COLLECTOR_MAX_OBSERVATIONS)
-
-const store = new SessionStore();
-// the live engine is rebuilt from persisted observations after SW restarts
-let engine = new CollectorEngine();
-let detachedWarning = false;
-let collectorToken: string | null = null;
+const runtime = new CollectorRuntime({ store: new SessionStore() });
 let activeTabId: number | null = null;
-let flushing = false;
 
 interface RuntimeMessage {
   type: string;
   url?: string;
   code?: string;
   tabId?: number;
-}
-
-type Sender = (message: RuntimeMessage) => Promise<Record<string, unknown>>;
-
-async function persist(): Promise<CollectorState> {
-  const state = await store.get();
-  state.observations = [...engine.observations];
-  state.serverUrl = state.serverUrl || "http://127.0.0.1:8911";
-  await store.set(state);
-  return state;
 }
 
 function currentOrigin(url: string | undefined): string | null {
@@ -55,144 +42,38 @@ function currentOrigin(url: string | undefined): string | null {
   }
 }
 
-async function startCapture(tabId: number): Promise<CollectorState> {
-  const state = await store.get();
+async function startCapture(tabId: number) {
   const tab = await chrome.tabs.get(tabId);
   const origin = currentOrigin(tab.url);
   if (!origin || !/^https?:/.test(origin)) {
     throw new Error("Only http(s) pages can be collected");
   }
-  // never collect traffic toward the control plane itself
-  let serverOrigin = "";
-  try {
-    serverOrigin = new URL(state.serverUrl).origin;
-  } catch {
-    throw new Error("Invalid server URL");
-  }
-  engine = new CollectorEngine({ excludedOrigins: new Set([serverOrigin]) });
-  engine.observations.push(...state.observations);
+  const state = await runtime.startCapture(tabId, origin);
   await cdp.attach(tabId);
   await cdp.networkEnable(tabId);
   activeTabId = tabId;
-  detachedWarning = false;
-  state.session = {
-    tabId,
-    origin,
-    attached: true,
-    startedAt: Date.now(),
-  };
-  await store.set(state);
   return state;
 }
 
-async function stopCapture(): Promise<CollectorState> {
-  const state = await store.get();
+async function stopCapture() {
   if (activeTabId !== null) await cdp.detach(activeTabId);
   activeTabId = null;
-  state.session = null;
-  state.observations = [...engine.observations];
-  await store.set(state);
-  return state;
+  return runtime.stopCapture();
 }
 
-async function autoFlush(): Promise<void> {
-  if (!collectorToken || flushing) return;
-  const state = await store.get();
-  if (!state.pairing || state.observations.length < AUTO_FLUSH_THRESHOLD) return;
-  flushing = true;
-  try {
-    await doSubmit(state);
-  } catch {
-    // manual Submit will surface the error; buffer stays intact
-  } finally {
-    flushing = false;
-  }
-}
-
-async function doSubmit(state: CollectorState): Promise<CollectorState> {
-  if (!collectorToken || !state.pairing) throw new Error("Not paired with pp switch yet");
-  if (state.observations.length === 0) throw new Error("Nothing to submit yet");
-  let uploadedTotal = 0;
-  let last;
-  while (uploadedTotal < state.observations.length) {
-    const batch: Observation[] = state.observations.slice(
-      uploadedTotal,
-      uploadedTotal + SUBMIT_BATCH,
-    );
-    last = await submitObservations(state.serverUrl, collectorToken, batch);
-    uploadedTotal += batch.length;
-  }
-  const uploaded = state.observations.length;
-  engine.dropUploaded(uploaded);
-  state.observations = [...engine.observations];
-  state.lastSubmit = {
-    at: Date.now(),
-    uploaded,
-    candidates: last?.candidates ?? 0,
-    operationsCreated: last?.operations_created ?? 0,
-    operationsUpdated: last?.operations_updated ?? 0,
-  };
-  await store.set(state);
-  return state;
-}
-
-const handlers: Record<string, Sender> = {
-  async getState() {
-    return { state: await persist(), detachedWarning };
-  },
-
-  async setServer({ url }) {
-    const state = await store.get();
-    const normalized = (url ?? "").trim().replace(/\/+$/, "");
-    if (!/^https?:\/\//.test(normalized)) throw new Error("Server URL must start with http:// or https://");
-    state.serverUrl = normalized;
-    await store.set(state);
-    return { state };
-  },
-
-  async pair({ code }) {
-    const state = await store.get();
-    const result = await pair(state.serverUrl, code ?? "");
-    collectorToken = result.collector_token;
-    state.pairing = {
-      serverUrl: state.serverUrl,
-      serviceId: result.service_id,
-      tokenExpiresAt: result.token_expires_at,
-    };
-    await store.set(state);
-    return { state };
-  },
-
-  async unpair() {
-    collectorToken = null;
-    const state = await store.get();
-    state.pairing = null;
-    await store.set(state);
-    return { state };
-  },
-
-  async start({ tabId }) {
-    return { state: await startCapture(tabId ?? -1) };
-  },
-
-  async stop() {
-    return { state: await stopCapture() };
-  },
-
-  async clearBuffer() {
-    engine.clear();
-    return { state: await persist() };
-  },
-
-  async submit() {
-    const state = await store.get();
-    const next = await doSubmit(state);
-    return { state: next };
-  },
-
-  async preview() {
-    return { candidates: engine.preview() as CandidatePreview[] };
-  },
+const handlers: Record<
+  string,
+  (message: RuntimeMessage) => Promise<unknown> | unknown
+> = {
+  getState: () => runtime.getState(),
+  setServer: ({ url }) => runtime.setServerUrl(url ?? ""),
+  pair: ({ code }) => runtime.pair(code ?? ""),
+  unpair: () => runtime.unpair(),
+  start: ({ tabId }) => startCapture(tabId ?? -1),
+  stop: () => stopCapture(),
+  clearBuffer: () => runtime.clearBuffer(),
+  submit: () => runtime.submit(),
+  preview: () => ({ candidates: runtime.engineRef.preview() as CandidatePreview[] }),
 };
 
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResponse) => {
@@ -201,8 +82,10 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, _sender, sendResp
     sendResponse({ ok: false, error: `Unknown message type: ${message.type}` });
     return false;
   }
-  handler(message)
-    .then((data) => sendResponse({ ok: true, ...data }))
+  Promise.resolve(handler(message))
+    .then((data: unknown) =>
+      sendResponse({ ok: true, ...(data as Record<string, unknown>) }),
+    )
     .catch((error: Error) => sendResponse({ ok: false, error: error.message }));
   return true; // async response
 });
@@ -213,22 +96,24 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   const requestId = (params as { requestId?: string }).requestId ?? "";
   switch (method) {
     case "Network.requestWillBeSent":
-      engine.onRequestWillBeSent(requestId, params as never);
+      runtime.engineRef.onRequestWillBeSent(requestId, params as never);
       break;
     case "Network.responseReceived":
-      engine.onResponseReceived(requestId, params as never);
+      runtime.engineRef.onResponseReceived(requestId, params as never);
       break;
     case "Network.loadingFailed":
-      engine.onLoadingFailed(requestId);
+      runtime.engineRef.onLoadingFailed(requestId);
       break;
     case "Network.loadingFinished":
-      void engine
+      void runtime.engineRef
         .onLoadingFinished(
           requestId,
           (id) => cdp.getResponseBody(source.tabId!, id),
           (id) => cdp.getRequestPostData(source.tabId!, id),
         )
-        .then(() => autoFlush())
+        // FEAT-01-F1: persist the new observation BEFORE any flush
+        // decision, then maybe auto-submit
+        .then(() => runtime.onObservationComplete())
         .catch(() => undefined);
       break;
     default:
@@ -240,9 +125,8 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
 // capture session ends, the collected buffer survives (disconnect recovery).
 chrome.debugger.onDetach.addListener((source) => {
   if (activeTabId !== null && source.tabId === activeTabId) {
-    detachedWarning = true;
     activeTabId = null;
-    void persist().then(() =>
+    void runtime.noteAttachLost().then(() =>
       chrome.runtime.sendMessage({ type: "captureDetached" }).catch(() => undefined),
     );
   }
@@ -251,26 +135,11 @@ chrome.debugger.onDetach.addListener((source) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (activeTabId === tabId) {
     activeTabId = null;
-    detachedWarning = true;
-    void persist();
+    void runtime.noteAttachLost();
   }
 });
 
-// SW (re)start: restore buffer + pairing from session storage; a capture
-// session cannot survive SW suspension by itself - the popup will show
-// the detached warning and the user re-attaches.
-void (async () => {
-  const state = await store.get();
-  engine = new CollectorEngine({
-    excludedOrigins: new Set(
-      (() => {
-        try {
-          return [new URL(state.serverUrl).origin];
-        } catch {
-          return [];
-        }
-      })(),
-    ),
-  });
-  engine.observations.push(...state.observations);
-})();
+// SW (re)start: restore buffer, pairing and token from session storage;
+// a capture session cannot survive SW suspension - the popup shows the
+// detached state and the user re-attaches.
+void runtime.restore();

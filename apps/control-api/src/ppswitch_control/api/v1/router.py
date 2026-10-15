@@ -67,6 +67,7 @@ from ppswitch_control.services.connection_service import (
 from ppswitch_control.services.delegation_service import _active_delegation_exists
 from ppswitch_control.services.discovery_service import import_discovery_document
 from ppswitch_control.services.invocation_service import invoke_capability
+from ppswitch_control.services.operation_test_service import test_operation
 
 router = APIRouter(prefix="/api/v1")
 
@@ -207,6 +208,12 @@ class DelegationCreate(BaseModel):
     agent_principal_id: UUID
     scopes: list[str] = Field(default_factory=list)
     expires_at: str | None = None  # ISO-8601; None = no expiry
+
+
+class OperationTestRequest(BaseModel):
+    """FEAT-02 wizard: sample arguments for a live operation test."""
+
+    arguments: dict = Field(default_factory=dict)
 
 
 class CollectorPairRequest(BaseModel):
@@ -648,6 +655,35 @@ def get_operation(
             ],
         },
     )
+
+
+@router.post("/operations/{operation_id}/test")
+def test_operation_route(
+    operation_id: UUID,
+    payload: OperationTestRequest,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("operations.test")),
+    session: Session = Depends(get_session),
+):
+    """Live test call through the caller's active profile (FEAT-02).
+
+    Human-only. Arguments are whitelisted against the operation's
+    observed contract; the request runs through the same trusted
+    executor path (approved endpoint, network policy, response guard)
+    as a real invocation but creates no invocation record.
+    """
+    settings = request.app.state.settings
+    executor_client: httpx.Client = request.app.state.executor_client
+    result = test_operation(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        operation_id=operation_id,
+        arguments=payload.arguments,
+        settings=settings,
+        executor_client=executor_client,
+    )
+    return ok(request, result)
 
 
 @router.post("/operations/{operation_id}/verify")

@@ -113,6 +113,8 @@ ACTION_MIN_ROLE: dict[str, int] = {
     "discovery.import": 0,
     "operations.read": 0,
     "operations.verify": 0,
+    "operations.test": 0,   # FEAT-02: wizard test call (human members
+                             # only - never granted to agents)
     "capabilities.read": 0,
     "capabilities.create": 0,
     "capabilities.review": 1,   # R-13: formal reviewer role, not just "any human"

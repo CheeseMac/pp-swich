@@ -3,6 +3,7 @@ import { getToken } from "./api";
 import { Login } from "./pages/Login";
 import { ServicesPage } from "./pages/Services";
 import { DiscoveryPage } from "./pages/Discovery";
+import { WizardPage } from "./pages/Wizard";
 import { CapabilitiesPage } from "./pages/Capabilities";
 import { ConnectionsPage } from "./pages/Connections";
 import { ProfilesPage } from "./pages/Profiles";
@@ -14,6 +15,7 @@ type PrincipalInfo = { name: string; kind: string };
 const PAGES = [
   { id: "services", label: "Services" },
   { id: "discovery", label: "Discovery" },
+  { id: "wizard", label: "发布向导" },
   { id: "capabilities", label: "Capabilities" },
   { id: "connections", label: "Connections" },
   { id: "profiles", label: "Profiles" },
@@ -26,6 +28,7 @@ type PageId = (typeof PAGES)[number]["id"];
 export function App() {
   const [page, setPage] = useState<PageId>("services");
   const [principal, setPrincipal] = useState<PrincipalInfo | null>(null);
+  const [wizardSeed, setWizardSeed] = useState<string | null>(null);
 
   useEffect(() => {
     if (!getToken()) return;
@@ -82,7 +85,17 @@ export function App() {
       </aside>
       <main className="main">
         {page === "services" && <ServicesPage />}
-        {page === "discovery" && <DiscoveryPage />}
+        {page === "discovery" && (
+          <DiscoveryPage
+            publishToWizard={(operationId) => {
+              setWizardSeed(operationId);
+              setPage("wizard");
+            }}
+          />
+        )}
+        {page === "wizard" && (
+          <WizardPage seedOperationId={wizardSeed} clearSeed={() => setWizardSeed(null)} />
+        )}
         {page === "capabilities" && <CapabilitiesPage />}
         {page === "connections" && <ConnectionsPage />}
         {page === "profiles" && <ProfilesPage />}

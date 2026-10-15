@@ -117,7 +117,7 @@ const els = {
   submitStatus: $("submit-status"),
 };
 
-function render(state: CollectorState, detachedWarning: boolean): void {
+function render(state: CollectorState): void {
   if (!els.serverUrl.value) els.serverUrl.value = state.serverUrl;
 
   const paired = !!state.pairing;
@@ -132,15 +132,16 @@ function render(state: CollectorState, detachedWarning: boolean): void {
     : "在控制台 Discovery 页选择服务并生成配对码，然后粘贴到上面。";
 
   const live = !!state.session?.attached;
+  const detached = !!state.session && !state.session.attached;
   els.btnStart.hidden = live;
   els.btnStop.hidden = !live;
   els.captureStatus.textContent = live
-    ? `采集中 · ${state.observations.length} 条观察 · ${state.session!.origin}`
+    ? `采集中 · ${state.observations.length} 条观察 · 仅 ${state.session!.origin}`
     : state.observations.length > 0
       ? `未在采集 · 缓冲区有 ${state.observations.length} 条观察`
       : "未在采集。";
   els.captureStatus.classList.toggle("live", live);
-  els.detachedWarning.hidden = !detachedWarning;
+  els.detachedWarning.hidden = !detached;
 
   els.btnSubmit.disabled = !paired || state.observations.length === 0;
 
@@ -158,7 +159,7 @@ async function refresh(): Promise<void> {
     els.captureStatus.textContent = `后台服务不可用：${"error" in response ? response.error : "无状态返回"}`;
     return;
   }
-  render(response.state, !!response.detachedWarning);
+  render(response.state);
   const preview = await send({ type: "preview" });
   if (preview.ok) renderCandidates(preview.candidates ?? []);
 }

@@ -131,3 +131,43 @@ export interface CollectorObservation {
   };
   created_at: string | null;
 }
+
+export interface OperationVersionView {
+  id: string;
+  version: number;
+  input_schema: Record<string, unknown>;
+  output_schema: Record<string, unknown>;
+}
+
+export interface OperationDetail {
+  id: string;
+  method: string;
+  normalized_path: string;
+  status: string;
+  versions: OperationVersionView[];
+}
+
+export interface OperationTestResult {
+  ok: boolean;
+  executor_status: number;
+  error_code: string | null;
+  result: unknown;
+}
+
+export interface CapabilityDetailView {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  status: string;
+  versions: {
+    id: string;
+    version: string;
+    risk_level: string;
+    status: string;
+    input_schema: Record<string, unknown>;
+    output_schema: Record<string, unknown>;
+    allow_fields: string[];
+    execution: Record<string, unknown>;
+  }[];
+}

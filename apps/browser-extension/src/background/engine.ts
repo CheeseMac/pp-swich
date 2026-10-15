@@ -21,12 +21,19 @@ import type { CandidatePreview, Observation } from "../shared/types.js";
 export interface EngineConfig {
   /** origins never collected (the pp-switch console itself) */
   excludedOrigins: Set<string>;
+  /**
+   * When non-empty, ONLY these origins are collected (domain scope).
+   * Capture mode sets it to the attached tab's own origin, so
+   * third-party Fetch/XHR observed on the page is dropped.
+   */
+  allowedOrigins?: Set<string>;
   maxBodyBytes: number;
   maxBuffer: number;
 }
 
 export const DEFAULT_CONFIG: EngineConfig = {
   excludedOrigins: new Set(),
+  allowedOrigins: undefined,
   maxBodyBytes: 256 * 1024,
   maxBuffer: 5_000,
 };
@@ -132,6 +139,13 @@ export class CollectorEngine {
     const parts = splitUrl(entry.url);
     if (!parts) return null;
     if (this.config.excludedOrigins.has(parts.origin)) return null;
+    if (
+      this.config.allowedOrigins &&
+      this.config.allowedOrigins.size > 0 &&
+      !this.config.allowedOrigins.has(parts.origin)
+    ) {
+      return null; // outside the approved domain scope
+    }
 
     const template = coarsenPath(parts.pathname);
     const queryNames = parseQueryNames(parts.search);

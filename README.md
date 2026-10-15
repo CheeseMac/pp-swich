@@ -68,7 +68,7 @@ uv run python scripts/seed-demo.py
 #    -> Invocations 调用并观察数据集随档案切换
 ```
 
-测试：`uv run pytest`（279 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）+ `pnpm test`（浏览器扩展 25 项 vitest）；检查：`uv run ruff check . && uv run mypy packages apps`。
+测试：`uv run pytest`（287 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）+ `pnpm test`（浏览器扩展 31 项 vitest）；检查：`uv run ruff check . && uv run mypy packages apps`。
 
 ## 解决什么问题
 
@@ -139,6 +139,7 @@ uv run python scripts/seed-demo.py
 | **生产就绪 Gate R1 进度** | **[30-GATE-R1-PROGRESS](docs/30-GATE-R1-PROGRESS.md)** |
 | **交接文档（状态/任务/坑/红线）** | **[31-HANDOVER](docs/31-HANDOVER.md)** |
 | **FEAT-01 浏览器 API Collector 交付记录** | **[32-FEAT-01-COLLECTOR](docs/32-FEAT-01-COLLECTOR.md)** |
+| **FEAT-02 发布向导交付记录** | **[33-FEAT-02-WIZARD](docs/33-FEAT-02-WIZARD.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 

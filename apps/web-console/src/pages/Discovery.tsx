@@ -9,7 +9,7 @@ import type {
 } from "../types";
 import { Button, Card, Empty, ErrorNote, Field, StatusBadge } from "../ui";
 
-export function DiscoveryPage() {
+export function DiscoveryPage({ publishToWizard }: { publishToWizard: (operationId: string) => void }) {
   const [services, setServices] = useState<Service[]>([]);
   const [operations, setOperations] = useState<Operation[]>([]);
   const [observations, setObservations] = useState<CollectorObservation[]>([]);
@@ -206,6 +206,7 @@ export function DiscoveryPage() {
                 <th>route template</th>
                 <th>status</th>
                 <th></th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -222,6 +223,9 @@ export function DiscoveryPage() {
                         Verify
                       </Button>
                     )}
+                  </td>
+                  <td>
+                    <Button onClick={() => publishToWizard(op.id)}>发布为工具</Button>
                   </td>
                 </tr>
               ))}

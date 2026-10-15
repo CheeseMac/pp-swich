@@ -4,7 +4,8 @@
  * - POST /api/v1/collector/pair          (one-time pairing code -> token)
  * - POST /api/v1/collector/observations  (bearer collector token)
  *
- * It NEVER holds or sees a user management token.
+ * It NEVER holds or sees a user management token. The fetch
+ * implementation is injectable so the runtime is unit-testable.
  */
 
 import type { Observation } from "./types.js";
@@ -24,6 +25,8 @@ export interface SubmitResult {
   observations_created: number;
 }
 
+export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
 async function unwrap<T>(response: Response): Promise<T> {
   const payload = (await response.json().catch(() => ({}))) as {
     data?: T;
@@ -38,12 +41,19 @@ async function unwrap<T>(response: Response): Promise<T> {
   return payload.data;
 }
 
-export async function pair(serverUrl: string, pairingCode: string): Promise<PairResult> {
-  const response = await fetch(new URL("/api/v1/collector/pair", serverUrl), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pairing_code: pairingCode.trim().toUpperCase() }),
-  });
+export async function pair(
+  serverUrl: string,
+  pairingCode: string,
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
+): Promise<PairResult> {
+  const response = await fetchImpl(
+    new URL("/api/v1/collector/pair", serverUrl).toString(),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pairing_code: pairingCode.trim().toUpperCase() }),
+    },
+  );
   return unwrap<PairResult>(response);
 }
 
@@ -51,14 +61,18 @@ export async function submitObservations(
   serverUrl: string,
   collectorToken: string,
   observations: Observation[],
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
 ): Promise<SubmitResult> {
-  const response = await fetch(new URL("/api/v1/collector/observations", serverUrl), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${collectorToken}`,
+  const response = await fetchImpl(
+    new URL("/api/v1/collector/observations", serverUrl).toString(),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${collectorToken}`,
+      },
+      body: JSON.stringify({ observations }),
     },
-    body: JSON.stringify({ observations }),
-  });
+  );
   return unwrap<SubmitResult>(response);
 }
