@@ -92,6 +92,26 @@ jobs:
       - name: Pytest on PostgreSQL (QA-PG-01..05 + FEAT-04 read-only DB)
         run: uv run pytest packages/db/tests apps/control-api/tests apps/executor/tests tests/e2e -q
 
+  install-smoke:
+    name: M2 install smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Sync workspace
+        run: uv sync --all-packages
+
+      # docs/40 section 1: the fresh-install user journey must pass on a
+      # clean runner from the lockfile alone (loopback only, no services
+      # container, no seeded state)
+      - name: Fresh-install verification
+        run: uv run python scripts/verify-install.py
+
   docker-deploy:
     name: PR-QA-06 docker deploy matrix
     runs-on: ubuntu-latest

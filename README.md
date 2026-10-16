@@ -55,6 +55,10 @@
 # 1. 安装依赖（Python 3.12+ / Node 20+）
 uv sync --all-packages && pnpm install
 
+# 1.5 一键安装自检（全新库→迁移→真实服务→完整首用户旅程，仅回环流量）
+#     预期末行 INSTALL VERIFIED —— 失败先修环境，不要跳过
+uv run python scripts/verify-install.py
+
 # 2. 启动全部服务（control 8911 / executor 8912 / mock CRM 8913 / console 5173）
 uv run python scripts/dev-up.py --ui
 
@@ -147,6 +151,7 @@ uv run python scripts/seed-demo.py
 | **评审回应：连接所有权 + Agent 组合验收** | **[37-REVIEW-RESPONSE](docs/37-REVIEW-RESPONSE-2026-10-16.md)** |
 | **交接文档（FEAT-04 会话入口）** | **[38-HANDOVER-FEAT04](docs/38-HANDOVER-FEAT04.md)** |
 | **FEAT-04 只读 PostgreSQL 发现交付记录** | **[39-FEAT04-DB-DISCOVERY](docs/39-FEAT04-DB-DISCOVERY.md)** |
+| **Alpha 快速上手与实机验收剧本** | **[40-ALPHA-QUICKSTART](docs/40-ALPHA-QUICKSTART.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 

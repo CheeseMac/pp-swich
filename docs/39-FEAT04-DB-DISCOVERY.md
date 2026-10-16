@@ -42,8 +42,13 @@ e2e 7 项）在 CI `postgresql` job（PR-QA-06）执行，本机无 PG 环境
   形状恒为 `SELECT cols FROM schema.view WHERE k=%(k)s ... LIMIT n`。
   连内部签名计划都无法改变这一形状（e2e 篡改测试）。
 - **只读三重保险**：账号角色（GRANT SELECT only，激活时 executor
-  实连并**拒绝 superuser/bypassrlas 级账号**）+ 会话级
+  实连并**拒绝 superuser/bypassrls 级账号**）+ 会话级
   `default_transaction_read_only=on` + 语句形状恒为单条 SELECT。
+  **责任边界（2026-10-16 复复核口径）**：激活校验证明的是"账号可
+  连接且非 superuser/bypassrls 级"，**不构成对账号全部 GRANT 的
+  审计**——仅授予必要 SELECT 权限的数据库账号由部署者（DBA 侧）
+  配置并保证，文档与代码注释均不得表述为"程序自动审计了账号的
+  全部权限"。
 - **凭证路径完全复用 FEAT-03**：`ppswitch-secret put <name>
   --scheme postgres`（user+password 入 OS keyring）→ Connection
   （auth_scheme=postgres, secret_name）→ activate（executor 实连
@@ -109,7 +114,11 @@ e2e 7 项）在 CI `postgresql` job（PR-QA-06）执行，本机无 PG 环境
    聚合视图属后续切片（需先过评审对"行集工具"的守卫语义）。
 2. **直连模式**：DB 连接不经 egress-gateway（隔离部署拓扑下
    executor 无出口网络时 DB 目标不可达，属部署形态约束，
-   文档化不实现）。
+   文档化不实现）。**远程 DB TLS 前置（2026-10-16 复复核要求）**：
+   当前钉扎解决的是目的地址选择，不含传输加密与服务器身份认证；
+   在开放远程或团队共享数据库目标之前，必须补强制 TLS + 服务器
+   证书校验 + 拒绝降级测试（实现建议：psycopg `hostaddr` 用已钉扎
+   IP 建连、`host` 保留原始主机名供证书验证）。
 3. **单一 engine**：仅 `postgres`；MySQL/SQLite 等未开工。
 4. **标识符窄集**：schema/view/列仅接受未加引号安全的
    `[A-Za-z_][A-Za-z0-9_]{0,62}`，异形命名对象在发现层跳过。
