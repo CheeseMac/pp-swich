@@ -68,7 +68,7 @@ uv run python scripts/seed-demo.py
 #    -> Invocations 调用并观察数据集随档案切换
 ```
 
-测试：`uv run pytest`（300 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）+ `pnpm test`（浏览器扩展 31 项 vitest）；检查：`uv run ruff check . && uv run mypy packages apps`。
+测试：`uv run pytest`（304 个用例，含三服务真实 E2E 与攻击组合矩阵 SEC-021…030、SEC-031…042、SEC-043…048 及共享 Agent 综合攻击场景）+ `pnpm test`（浏览器扩展 31 项 vitest）；检查：`uv run ruff check . && uv run mypy packages apps`。
 
 ## 解决什么问题
 
@@ -143,6 +143,7 @@ uv run python scripts/seed-demo.py
 | **FEAT-05A Agent 一键接入交付记录** | **[34-FEAT-05A-AGENT-ACCESS](docs/34-FEAT-05A-AGENT-ACCESS.md)** |
 | **FEAT-03 本地 Keyring 交付记录** | **[35-FEAT-03-KEYRING](docs/35-FEAT-03-KEYRING.md)** |
 | **评审交接包入库（含 FEAT-03 验收剧本）** | **[36-REVIEW-HANDOFF](docs/36-REVIEW-HANDOFF-2026-10-15.md)** |
+| **评审回应：连接所有权 + Agent 组合验收** | **[37-REVIEW-RESPONSE](docs/37-REVIEW-RESPONSE-2026-10-16.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 

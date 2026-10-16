@@ -43,6 +43,10 @@
 用例；② Connections/Profiles UI 的切换演示截图；③ 用户手动完成
 Chrome 实机与 Claude/Cursor 实测。
 
+> **2026-10-16 更新**：①② 已由 docs/37 的修复 PR 关闭（含组合验收
+> `TestFeat03AgentKeyringCombo` 与 UI 演示截图）；③ 仍待用户手动。
+> 同 PR 修复了 2026-10-16 评审发现的连接所有权缺口。
+
 ## 2. 包内其余要点（对下轮评审的提醒）
 
 - 07-NEXT-SESSION-PROMPT.md 是**用户准备发给下一位评审人的开场

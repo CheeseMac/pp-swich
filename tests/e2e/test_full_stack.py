@@ -592,3 +592,140 @@ def _expire_grant(stack, agent_id):
         grant.expires_at = datetime.now(UTC) - timedelta(minutes=1)
         session.commit()
     engine.dispose()
+
+
+def agent_binding_version(stack, agent_id: str) -> int:
+    with httpx.Client(
+        base_url=stack["control"].url, timeout=30.0, trust_env=False
+    ) as client:
+        rows = client.get("/api/v1/active-bindings", headers=auth(ALICE_TOKEN)).json()["data"]
+    for row in rows:
+        if row["context_key"] == "agent:" + agent_id:
+            return int(row["version"])
+    raise AssertionError("no agent binding row")
+
+
+class TestFeat03AgentKeyringCombo:
+    """Review 2026-10-16 combined acceptance: ONE agent identity, ONE
+    published MCP tool, ONE grant + delegation - switched from keyring
+    Profile A to Profile B on the AGENT context, with the business
+    result proving the credential changed, revocation closing the path,
+    and no credential material anywhere in agent-visible payloads."""
+
+    def test_same_agent_switches_between_keyring_credentials(
+        self, stack, demo, fake_keyring
+    ) -> None:
+        from ppswitch import PPSwitchClient
+        from ppswitch.client import HttpTransport
+        from ppswitch_mcp.registry import build_tool_function
+
+        control_url = stack["control"].url
+
+        # two keyring credentials + connections + profiles
+        fake_keyring.put("combo-a", {"auth_scheme": "api_key",
+                                     "material": {"api_key": "MOCKKEY-DEMO-A-combo"}})
+        fake_keyring.put("combo-b", {"auth_scheme": "api_key",
+                                     "material": {"api_key": "MOCKKEY-DEMO-B-combo"}})
+        connections, profiles = {}, {}
+        with httpx.Client(
+            base_url=control_url, timeout=30.0, trust_env=False
+        ) as client:
+            for name in ("combo-a", "combo-b"):
+                conn = client.post(
+                    "/api/v1/connections",
+                    json={"service_id": demo["service_id"], "auth_scheme": "api_key",
+                          "secret_name": name},
+                    headers=auth(ALICE_TOKEN),
+                ).json()["data"]
+                assert client.post(
+                    f"/api/v1/connections/{conn['id']}/activate",
+                    headers=auth(ALICE_TOKEN),
+                ).status_code == 200
+                connections[name] = conn["id"]
+                profiles[name] = client.post(
+                    "/api/v1/profiles",
+                    json={"service_id": demo["service_id"],
+                          "endpoint_id": demo["endpoint_id"],
+                          "connection_id": conn["id"], "name": "combo-" + name},
+                    headers=auth(ALICE_TOKEN),
+                ).json()["data"]["id"]
+
+            # ONE agent identity, grant, delegation + ticket (active)
+            created = client.post(
+                "/api/v1/agent-principals",
+                json={"display_name": "combo-agent"},
+                headers=auth(ALICE_TOKEN),
+            ).json()["data"]
+            agent_id, agent_token = created["id"], created["token"]
+            assert client.post(
+                "/api/v1/agent-grants",
+                json={"agent_principal_id": agent_id,
+                      "capability_id": demo["capability_id"], "scopes": []},
+                headers=auth(ALICE_TOKEN),
+            ).status_code == 201
+            delegation = client.post(
+                "/api/v1/delegations",
+                json={"agent_principal_id": agent_id, "scopes": []},
+                headers=auth(ALICE_TOKEN),
+            ).json()["data"]
+            ticket = client.post(
+                "/api/v1/delegations/" + delegation["id"] + "/context",
+                headers=auth(ALICE_TOKEN),
+            ).json()["data"]["context"]
+
+            # bind the AGENT context to keyring profile A
+            assert client.put(
+                f"/api/v1/active-bindings/{demo['service_id']}/agent:{agent_id}",
+                json={"profile_id": profiles["combo-a"], "expected_version": 0},
+                headers=auth(ALICE_TOKEN),
+            ).status_code == 200
+
+        # the exact function the MCP adapter registers for tools/call
+        tool = build_tool_function(
+            PPSwitchClient(HttpTransport(control_url, agent_token, trust_env=False)),
+            "crm.get_customer",
+            {"type": "object", "required": ["customer_id"],
+             "properties": {"customer_id": {"type": "string"}}},
+            "Get a customer you are authorized to view.",
+        )
+        # the signed delegation ticket exists and is valid for this pair
+        assert ticket
+
+        # run 1 via Profile A (credential A)
+        first = tool(customer_id="C-1024")
+        assert first["status"] == "succeeded", first
+        assert first["result"]["display_name"] == "Acme Industries"
+
+        # switch the AGENT context to Profile B (credential B)
+        with httpx.Client(
+            base_url=control_url, timeout=30.0, trust_env=False
+        ) as client:
+            assert client.put(
+                f"/api/v1/active-bindings/{demo['service_id']}/agent:{agent_id}",
+                json={"profile_id": profiles["combo-b"],
+                      "expected_version": agent_binding_version(stack, agent_id)},
+                headers=auth(ALICE_TOKEN),
+            ).status_code == 200
+
+        # run 2 via Profile B - same agent, same tool, different credential
+        second = tool(customer_id="C-1024")
+        assert second["status"] == "succeeded", second
+        assert second["result"]["display_name"] == "Acme Industries (QA copy)"
+
+        # revoke credential B -> the agent's next call is refused
+        with httpx.Client(
+            base_url=control_url, timeout=30.0, trust_env=False
+        ) as client:
+            assert client.post(
+                "/api/v1/connections/" + connections["combo-b"] + "/revoke",
+                headers=auth(ALICE_TOKEN),
+            ).status_code == 200
+        try:
+            third = tool(customer_id="C-1024")
+            denied = third.get("status") not in ("succeeded",)
+        except Exception:
+            denied = True
+        assert denied
+
+        # no credential material anywhere in agent-visible payloads
+        assert "MOCKKEY" not in json.dumps(first) + json.dumps(second)

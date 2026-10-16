@@ -1029,9 +1029,12 @@ def list_connections(
     auth: AuthContext = Depends(require_permission("connections.read")),
     session: Session = Depends(get_session),
 ):
-    rows = session.scalars(
-        select(ConnectionRow).where(ConnectionRow.workspace_id == auth.workspace_id)
-    ).all()
+    stmt = select(ConnectionRow).where(ConnectionRow.workspace_id == auth.workspace_id)
+    # review 2026-10-16: connections are per-owner - non-admins list only
+    # their own; admins keep the workspace-wide operational view
+    if not _is_admin(auth):
+        stmt = stmt.where(ConnectionRow.owner_principal_id == auth.principal_id)
+    rows = session.scalars(stmt).all()
     return ok(
         request,
         [

@@ -339,7 +339,13 @@ def activate_connection(
     the store is unreachable or the secret is missing.
     """
     connection = session.get(ConnectionRow, connection_id)
-    if connection is None or connection.workspace_id != workspace_id:
+    if (
+        connection is None
+        or connection.workspace_id != workspace_id
+        # review 2026-10-16: connections are per-owner; a non-owner in
+        # the same workspace must not learn the resource exists
+        or connection.owner_principal_id != principal_id
+    ):
         raise ApiError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found")
     if connection.status != "pending":
         raise ApiError(ErrorCode.CONFLICT, f"Connection already {connection.status}")
@@ -383,7 +389,11 @@ def revoke_connection(
 ) -> ConnectionRow:
     """FEAT-03: revoke a connection; the policy engine denies its calls."""
     connection = session.get(ConnectionRow, connection_id)
-    if connection is None or connection.workspace_id != workspace_id:
+    if (
+        connection is None
+        or connection.workspace_id != workspace_id
+        or connection.owner_principal_id != principal_id
+    ):
         raise ApiError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found")
     if connection.status == "revoked":
         raise ApiError(ErrorCode.CONFLICT, "Connection already revoked")
