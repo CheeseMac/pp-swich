@@ -183,6 +183,12 @@ def db_stack(tmp_path_factory, start_server_fixture, fake_keyring):
     control.stop()
     executor.stop()
     engine.dispose()
+    # DROP OWNED BY first: the role holds grants in the target database and
+    # DROP ROLE alone fails with DependentObjectsStillExist
+    grant_cleanup = create_engine(target_db, isolation_level="AUTOCOMMIT")
+    with grant_cleanup.connect() as conn:
+        conn.execute(text(f'DROP OWNED BY "{role}"'))
+    grant_cleanup.dispose()
     cleanup = create_engine(PG_URL, isolation_level="AUTOCOMMIT")
     with cleanup.connect() as conn:
         conn.execute(text(f'DROP ROLE IF EXISTS "{role}"'))
@@ -421,17 +427,19 @@ class TestFeat04DbDiscovery:
         }
         cases = [
             # unapproved schema: rejected before any connection
-            ({"schema_name": "hr", "view": "salaries", "columns": ["emp"],
-              "param_map": {}}, "refuse"),
+            {"schema_name": "hr", "view": "salaries", "columns": ["emp"],
+             "param_map": {}},
             # injection identifiers: the structured spec cannot carry them
-            ({"schema_name": "crm", "view": 'customers_v"; DROP TABLE customers',
-              "columns": ["id"], "param_map": {}}, "refuse"),
-            # a column set outside the reviewed tool contract: executes the
-            # fixed SELECT shape, but the guard (empty allow list/schema)
-            # drops every field - the canary never leaves the executor
-            ({"columns": ["secret_note"]}, "gut"),
+            {"schema_name": "crm", "view": 'customers_v"; DROP TABLE customers',
+             "columns": ["id"], "param_map": {}},
+            # a column set outside the reviewed tool contract: the kept
+            # filter references a dropped column, so even this "valid
+            # shape" tamper is refused - filters must select their own
+            # columns; and had it run, the guard (empty allow list/schema)
+            # would have dropped every field anyway
+            {"columns": ["secret_note"]},
         ]
-        for override, expectation in cases:
+        for override in cases:
             query = {**base_query, **override}
             plan = {
                 "invocation_id": str(uuid.uuid4()),
@@ -461,11 +469,7 @@ class TestFeat04DbDiscovery:
             )
             assert "CANARY" not in response.text, override
             assert RO_PASSWORD not in response.text, override
-            if expectation == "refuse":
-                assert response.status_code != 200, (override, response.text)
-            else:
-                assert response.status_code == 200, (override, response.text)
-                assert response.json()["result"] == {}  # guard dropped everything
+            assert response.status_code != 200, (override, response.text)
 
     def test_no_password_or_hr_leakage(self, db_stack, db_demo) -> None:
         """Acceptance 5: the DB password never lands in the control DB

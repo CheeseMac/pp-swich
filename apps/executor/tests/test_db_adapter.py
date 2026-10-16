@@ -317,6 +317,14 @@ def pg_stack():
         "database": url.database,
         "role": role,
     }
+    # DROP OWNED BY first: the role holds grants in the provisioned
+    # database and DROP ROLE alone fails with DependentObjectsStillExist
+    grant_engine = __import__("sqlalchemy").create_engine(
+        db_url, isolation_level="AUTOCOMMIT"
+    )
+    with grant_engine.connect() as conn:
+        conn.execute(text(f'DROP OWNED BY "{role}"'))
+    grant_engine.dispose()
     admin2 = _admin_engine()
     with admin2.connect() as conn:
         conn.execute(text(f'DROP ROLE IF EXISTS "{role}"'))

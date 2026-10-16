@@ -225,7 +225,15 @@ def create_app(
             state.settings.internal_token):
             raise ApiError(ErrorCode.INVALID_SIGNATURE, "Plan signature verification failed")
 
-        plan = InvocationPlan.model_validate(payload.plan)
+        try:
+            plan = InvocationPlan.model_validate(payload.plan)
+        except ValueError as exc:
+            # malformed/tampered plan shape (e.g. db_query identifiers):
+            # refuse with a clean code instead of an unhandled 500
+            raise ApiError(
+                ErrorCode.DATABASE_QUERY_REJECTED,
+                "Plan payload failed structural validation",
+            ) from exc
 
         if time.time() > plan.deadline_epoch_s:
             raise ApiError(ErrorCode.DEADLINE_EXCEEDED, "Plan deadline has passed")
