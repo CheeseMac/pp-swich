@@ -29,9 +29,11 @@ Agent 切换两套凭证"的组合证据此前不存在。
 - `GET /connections`：非 admin **只返回本人连接**；admin 保留全量
   运维视图；
 - **负向回归**（`test_connection_ownership.py` ×3）：同 workspace
-  两人类 principal——非所有者（member 与 reviewer 均测）激活/撤销
-  他人连接一律 404；member 列表只含本人连接、admin 全量；owner 自身
-  流程不受影响（激活 fail-closed 语义与撤销均正常）。
+  两人类 principal——member 与 reviewer 对他人连接的**激活和撤销
+  各自均有 404 断言**；member 列表只含本人连接、admin 全量；owner
+  自身流程不受影响（激活 fail-closed 语义与撤销均正常）。
+  （2026-10-16 复核指出本节措辞曾宽于断言：reviewer 激活的负向
+  断言系复核后补齐，措辞同步更正。）
 
 ### 2.2 Agent + Keyring 组合验收（评审原文剧本逐条）
 

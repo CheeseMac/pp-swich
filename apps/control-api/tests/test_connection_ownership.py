@@ -84,7 +84,11 @@ def test_non_owner_cannot_activate_or_revoke(setup):
     assert revoke.status_code == 404
     assert revoke.json()["error"]["code"] == "CONNECTION_NOT_FOUND"
 
-    # the reviewer principal is equally bound by ownership
+    # the reviewer principal is equally bound by ownership (both actions)
+    carol_activate = control.post(
+        f"/api/v1/connections/{alice_conn['id']}/activate", headers=auth(CAROL_TOKEN)
+    )
+    assert carol_activate.status_code == 404
     carol_revoke = control.post(
         f"/api/v1/connections/{alice_conn['id']}/revoke", headers=auth(CAROL_TOKEN)
     )

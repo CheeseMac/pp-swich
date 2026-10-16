@@ -144,6 +144,7 @@ uv run python scripts/seed-demo.py
 | **FEAT-03 本地 Keyring 交付记录** | **[35-FEAT-03-KEYRING](docs/35-FEAT-03-KEYRING.md)** |
 | **评审交接包入库（含 FEAT-03 验收剧本）** | **[36-REVIEW-HANDOFF](docs/36-REVIEW-HANDOFF-2026-10-15.md)** |
 | **评审回应：连接所有权 + Agent 组合验收** | **[37-REVIEW-RESPONSE](docs/37-REVIEW-RESPONSE-2026-10-16.md)** |
+| **交接文档（FEAT-04 会话入口）** | **[38-HANDOVER-FEAT04](docs/38-HANDOVER-FEAT04.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 
