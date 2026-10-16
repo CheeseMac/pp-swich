@@ -120,11 +120,15 @@ def upgrade() -> None:
     # connections: allow the postgres auth scheme (keyring-held ro account)
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        # named CHECK constraints are directly replaceable on PostgreSQL;
-        # a table rebuild would fight the incoming profiles foreign key
-        op.drop_constraint('ck_connections_auth_scheme', 'connections', type_='check')
-        op.create_check_constraint(
-            'ck_connections_auth_scheme', 'connections', _NEW_AUTH_CHECK)
+        # raw DDL with the literal constraint name: alembic would otherwise
+        # apply the metadata naming convention ON TOP of the name passed to
+        # drop_constraint (doubling the ck_ prefix) and find nothing
+        op.execute('ALTER TABLE connections '
+                   'DROP CONSTRAINT ck_connections_auth_scheme')
+        op.execute(
+            'ALTER TABLE connections ADD CONSTRAINT ck_connections_auth_scheme '
+            f'CHECK ({_NEW_AUTH_CHECK})'
+        )
     else:
         # SQLite cannot drop an unnamed CHECK in place: force a rebuild of
         # the table from an explicit definition that already carries the
@@ -146,9 +150,12 @@ def downgrade() -> None:
         batch_op.alter_column('endpoint_id', existing_type=sa.Uuid(), nullable=False)
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        op.drop_constraint('ck_connections_auth_scheme', 'connections', type_='check')
-        op.create_check_constraint(
-            'ck_connections_auth_scheme', 'connections', _OLD_AUTH_CHECK)
+        op.execute('ALTER TABLE connections '
+                   'DROP CONSTRAINT ck_connections_auth_scheme')
+        op.execute(
+            'ALTER TABLE connections ADD CONSTRAINT ck_connections_auth_scheme '
+            f'CHECK ({_OLD_AUTH_CHECK})'
+        )
     else:
         rebuild_meta = sa.MetaData()
         copy_from = _connections_table(rebuild_meta, _OLD_AUTH_CHECK)

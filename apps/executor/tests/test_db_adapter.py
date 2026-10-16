@@ -284,7 +284,17 @@ def pg_stack():
             "CREATE VIEW crm.customers_v AS "
             "SELECT id, display_name, note FROM crm.customers"
         ))
-        conn.execute(text("CREATE VIEW crm.slow_v AS SELECT pg_sleep(3) AS slept, 'x' AS id"))
+        # pg_sleep returns void (not a legal view column): wrap it in a
+        # plpgsql function returning text; call it in WHERE so the planner
+        # can never prune it from the view expansion
+        conn.execute(text(
+            "CREATE FUNCTION crm.slow_text() RETURNS text LANGUAGE plpgsql "
+            "AS $fn$ BEGIN PERFORM pg_sleep(3); RETURN 'done'; END $fn$"
+        ))
+        conn.execute(text(
+            "CREATE VIEW crm.slow_v AS "
+            "SELECT 'x' AS id WHERE crm.slow_text() IS NOT NULL"
+        ))
         conn.execute(text(
             "CREATE VIEW crm.big_v AS SELECT 'C-1' AS id, repeat('x', 100000) AS blob"
         ))
