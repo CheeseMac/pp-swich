@@ -75,3 +75,34 @@ crm.post_api_customers_search**。向导"重新选择/继续配置"回归验证�
 
 Python 290（287 + agent_access 3）+ vitest 31 = 321 项测试；
 ruff / mypy / 密钥扫描 / 双端构建全绿（CI 见提交记录）。
+
+
+## 7. 批复收尾（2026-10-15 批复指出，同日补齐）
+
+批复正确指出：演示授权的工具其路由在 Mock CRM 上返回 405——
+"能列出工具"不等于"能调用工具"。已按批复的验收表在**真实服务器
+栈**（e2e：control + executor + mock CRM 全真实进程）补齐：
+
+| 验证项 | 结果 |
+| --- | --- |
+| Agent 鉴权 | ✅ 一次性令牌通过（零授权时清单为空） |
+| MCP `tools/list` 语义 | ✅ 授权后清单**恰好只含**被授权工具 |
+| MCP `tools/call` 语义 | ✅ 适配器注册的同一工具函数 + Agent 凭证 + 签名委托票据 → 真实 HTTP → Mock CRM → 守卫投影返回 Acme Industries |
+| 未授权工具调用 | ✅ CAPABILITY_NOT_FOUND（存在性不泄露） |
+| 授权过期后调用 | ✅ 拒绝 |
+
+（tests/e2e/test_full_stack.py::TestFeat05AAgentCallCloseout）
+
+配套整改：
+- **截图脱敏**：批复提醒的令牌入截图问题已处理——docs/assets/feat05
+  截图为页面级脱敏后重拍（令牌以"一次性显示·截图脱敏"占位，PNG 字节
+  中无任何令牌）；
+- **配置不再走命令行参数**：生成的 MCP 配置改为 env 传递
+  （`PP_SWITCH_DEV_TOKEN`，适配器原生支持），进程列表/Shell 历史不再
+  可见令牌；
+- **页面措辞两态化**："连接与授权验证成功"（列出可见工具）与
+  "工具调用验证"（需在 Claude/Cursor 实测，控制面链路已由 e2e 覆盖）
+  分开表述，不再过度声明。
+
+待用户人工验收：用 Claude Desktop 或 Cursor 按生成配置拉起一次
+`ppswitch-mcp`（待办清单第一项）。

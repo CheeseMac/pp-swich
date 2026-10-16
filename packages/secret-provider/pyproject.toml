@@ -4,8 +4,12 @@ version = "0.1.0"
 description = "pp switch SecretProvider abstraction with in-memory mock implementation"
 requires-python = ">=3.12"
 dependencies = [
+    "keyring>=25",
     "ppswitch-core",
 ]
+
+[project.scripts]
+ppswitch-secret = "ppswitch_secrets.cli:main"
 
 [build-system]
 requires = ["hatchling"]

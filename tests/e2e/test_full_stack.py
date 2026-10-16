@@ -10,6 +10,7 @@ against the leaky CRM, and the in-flight profile snapshot (SEC-017).
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -33,7 +34,6 @@ def auth(token: str) -> dict:
 
 @pytest.fixture(scope="module")
 def stack(tmp_path_factory, start_server_fixture):
-    import os
 
     from ppswitch_control.app import create_app
     from ppswitch_control.auth import hash_token
@@ -54,6 +54,8 @@ def stack(tmp_path_factory, start_server_fixture):
     else:
         db_url = f"sqlite:///{db_dir / 'e2e.db'}"
     run_upgrade(db_url)
+    # share the URL with teardown-style helpers (_expire_grant)
+    os.environ["PP_SWITCH_E2E_DB_URL"] = db_url
     engine = create_engine_for_url(db_url)
     factory = create_session_factory(engine)
     with factory() as session:
@@ -318,3 +320,275 @@ class TestDemoFlow:
         actions = [e["action"] for e in events.json()["data"]]
         assert "invocation.execute" in actions
         assert "profile.activate" in actions
+
+
+
+
+class _FakeKeyringModule:
+    """In-process keyring stand-in; the OS store is never touched."""
+
+    class errors:
+        class KeyringError(Exception):
+            pass
+
+        class PasswordDeleteError(KeyringError):
+            pass
+
+    def __init__(self) -> None:
+        self.store: dict = {}
+
+    def get_password(self, service, username):
+        return self.store.get((service, username))
+
+    def set_password(self, service, username, password):
+        self.store[(service, username)] = password
+
+    def delete_password(self, service, username):
+        self.store.pop((service, username), None)
+
+    def put(self, name, payload):
+        self.store[(f"ppswitch/{name}", "pp-switch-executor")] = json.dumps(payload)
+
+
+@pytest.fixture()
+def fake_keyring(monkeypatch):
+    backend = _FakeKeyringModule()
+    import ppswitch_secrets.keyring as kr_module
+
+    monkeypatch.setattr(kr_module, "_keyring_module", lambda: backend)
+    return backend
+
+
+class TestFeat03KeyringProfiles:
+    """FEAT-03 acceptance: two keyring credentials, two profiles, one-click
+    switch, same tool, provably different credentials, no secrets exposed."""
+
+    def _activate(self, stack, connection_id):
+        with httpx.Client(
+            base_url=stack["control"].url, timeout=30.0, trust_env=False
+        ) as client:
+            return client.post(
+                f"/api/v1/connections/{connection_id}/activate", headers=auth(ALICE_TOKEN)
+            )
+
+    def test_switch_between_two_keyring_credentials(self, stack, demo, fake_keyring) -> None:
+        # 1) the human stores two TEST keys in the (faked) OS keyring
+        fake_keyring.put("feat03-a", {"auth_scheme": "api_key",
+                                      "material": {"api_key": "MOCKKEY-DEMO-A-feat03"}})
+        fake_keyring.put("feat03-b", {"auth_scheme": "api_key",
+                                      "material": {"api_key": "MOCKKEY-DEMO-B-feat03"}})
+
+        with httpx.Client(
+            base_url=stack["control"].url, timeout=30.0, trust_env=False
+        ) as client:
+            # 2) two pending keyring connections, activated only after the
+            #    executor proves the refs resolve
+            connections = {}
+            for name in ("feat03-a", "feat03-b"):
+                created = client.post(
+                    "/api/v1/connections",
+                    json={"service_id": demo["service_id"], "auth_scheme": "api_key",
+                          "secret_name": name},
+                    headers=auth(ALICE_TOKEN),
+                ).json()["data"]
+                assert created["status"] == "pending"
+                activated = self._activate(stack, created["id"])
+                assert activated.status_code == 200, activated.text
+                connections[name] = created["id"]
+
+            # fail-closed: a ref with no stored secret never activates
+            missing = client.post(
+                "/api/v1/connections",
+                json={"service_id": demo["service_id"], "auth_scheme": "api_key",
+                      "secret_name": "never-stored"},
+                headers=auth(ALICE_TOKEN),
+            ).json()["data"]
+            refused = self._activate(stack, missing["id"])
+            assert refused.status_code == 503
+            assert refused.json()["error"]["code"] == "SECRET_PROVIDER_UNAVAILABLE"
+
+            # 3) two profiles on the same approved endpoint
+            profiles = {}
+            for name, conn_id in connections.items():
+                profiles[name] = client.post(
+                    "/api/v1/profiles",
+                    json={"service_id": demo["service_id"],
+                          "endpoint_id": demo["endpoint_id"],
+                          "connection_id": conn_id, "name": "keyring-" + name},
+                    headers=auth(ALICE_TOKEN),
+                ).json()["data"]["id"]
+
+        # 4) switch A -> invoke -> switch B -> invoke: same tool, different
+        #    credentials, DIFFERENT business results (dataset A vs B)
+        assert switch_profile(stack, demo["service_id"], profiles["feat03-a"]).status_code == 200
+        via_a = invoke(stack, {"customer_id": "C-1024"})
+        assert via_a.status_code == 200, via_a.text
+        result_a = via_a.json()["data"]["result"]
+        assert result_a["display_name"] == "Acme Industries"
+
+        assert switch_profile(stack, demo["service_id"], profiles["feat03-b"]).status_code == 200
+        via_b = invoke(stack, {"customer_id": "C-1024"})
+        assert via_b.status_code == 200, via_b.text
+        result_b = via_b.json()["data"]["result"]
+        assert result_b["display_name"] == "Acme Industries (QA copy)"
+
+        # 5) trusted-backend evidence: different connections underneath
+        with httpx.Client(
+            base_url=stack["control"].url, timeout=30.0, trust_env=False
+        ) as client:
+            rows = client.get("/api/v1/invocations", headers=auth(ALICE_TOKEN)).json()["data"]
+        keyring_rows = [r for r in rows if "feat03" in str(r.get("profile_label", ""))]
+        assert len(keyring_rows) >= 2
+        # two distinct active profiles => two distinct keyring connections
+        labels = {r.get("profile_label") for r in keyring_rows[:2]}
+        assert labels == {"keyring-feat03-a", "keyring-feat03-b"}
+
+        # 6) agent-visible payloads contain no credential material
+        assert "MOCKKEY" not in json.dumps(result_a) + json.dumps(result_b)
+
+        # 7) revocation closes the path; switching back to A restores it
+        with httpx.Client(
+            base_url=stack["control"].url, timeout=30.0, trust_env=False
+        ) as client:
+            revoked = client.post(
+                "/api/v1/connections/" + connections["feat03-b"] + "/revoke",
+                headers=auth(ALICE_TOKEN),
+            )
+            assert revoked.status_code == 200
+            assert revoked.json()["data"]["status"] == "revoked"
+        # the revoked connection cannot be re-bound at all (fail-closed at
+        # binding time, not first call), and A keeps working
+        assert switch_profile(stack, demo["service_id"], profiles["feat03-b"]).status_code == 403
+        assert switch_profile(stack, demo["service_id"], profiles["feat03-a"]).status_code == 200
+        assert invoke(stack, {"customer_id": "C-1024"}).status_code == 200
+
+
+class TestFeat05AAgentCallCloseout:
+    """FEAT-05A closeout: the agent path actually CALLS the tool (MCP
+    tools/call semantics) through the real server stack."""
+
+    def _mint_agent(self, stack):
+        with httpx.Client(
+            base_url=stack["control"].url, timeout=30.0, trust_env=False
+        ) as client:
+            created = client.post(
+                "/api/v1/agent-principals",
+                json={"display_name": "e2e-closeout-agent"},
+                headers=auth(ALICE_TOKEN),
+            ).json()["data"]
+        return created["id"], created["token"]
+
+    def _delegate(self, stack, agent_id):
+        with httpx.Client(
+            base_url=stack["control"].url, timeout=30.0, trust_env=False
+        ) as client:
+            delegation = client.post(
+                "/api/v1/delegations",
+                json={"agent_principal_id": agent_id, "scopes": []},
+                headers=auth(ALICE_TOKEN),
+            ).json()["data"]
+            ticket = client.post(
+                "/api/v1/delegations/" + delegation["id"] + "/context",
+                headers=auth(ALICE_TOKEN),
+            ).json()["data"]["context"]
+        return delegation["id"], ticket
+
+    def test_agent_tools_list_and_call_over_real_stack(self, stack, demo) -> None:
+        from ppswitch import PPSwitchClient
+        from ppswitch.client import HttpTransport
+        from ppswitch_mcp.registry import build_tool_function
+
+        control_url = stack["control"].url
+        agent_id, agent_token = self._mint_agent(stack)
+
+        with httpx.Client(
+            base_url=control_url, timeout=30.0, trust_env=False
+        ) as client:
+            # a) agent auth works, zero grants -> nothing listed (SEC-045)
+            empty = client.get("/api/v1/capabilities", headers=auth(agent_token)).json()["data"]
+            assert empty == []
+
+            # b) grant exactly the published tool
+            granted = client.post(
+                "/api/v1/agent-grants",
+                json={"agent_principal_id": agent_id,
+                      "capability_id": demo["capability_id"], "scopes": []},
+                headers=auth(ALICE_TOKEN),
+            )
+            assert granted.status_code == 201
+
+            listed = client.get("/api/v1/capabilities", headers=auth(agent_token)).json()["data"]
+            assert [c["name"] for c in listed] == ["crm.get_customer"]
+
+        # delegation first: an agent-context binding requires it (P0-2)
+        _delegation_id, ticket = self._delegate(stack, agent_id)
+        with httpx.Client(
+            base_url=control_url, timeout=30.0, trust_env=False
+        ) as client:
+            binding = client.put(
+                f"/api/v1/active-bindings/{demo['service_id']}/agent:{agent_id}",
+                json={"profile_id": demo["profile_A"], "expected_version": 0},
+                headers=auth(ALICE_TOKEN),
+            )
+            assert binding.status_code == 200, binding.text
+
+        # c) tools/call semantics: the exact function the MCP adapter
+        #    registers, invoked with the agent credential + signed
+        #    delegation ticket -> real HTTP -> mock CRM -> guarded result
+        agent_client = PPSwitchClient(
+            HttpTransport(control_url, agent_token, trust_env=False)
+        )
+        tool = build_tool_function(
+            agent_client,
+            "crm.get_customer",
+            {"type": "object", "required": ["customer_id"],
+             "properties": {"customer_id": {"type": "string"}}},
+            "Get a customer you are authorized to view.",
+        )
+        outcome = tool(customer_id="C-1024")
+        assert outcome["status"] == "succeeded", outcome
+        assert outcome["result"]["display_name"] == "Acme Industries"
+        assert "MOCKKEY" not in json.dumps(outcome["result"])
+
+        # d) an UNGRANTED tool name is hidden from the agent entirely
+        try:
+            agent_client.invoke(
+                capability="crm.post_api_customers_search",
+                context_key="agent:" + agent_id,
+                delegation_context=ticket,
+                arguments={},
+            )
+            raised = False
+        except Exception as exc:  # PPSwitchError with CAPABILITY_NOT_FOUND
+            raised = "CAPABILITY_NOT_FOUND" in str(exc) or (
+                getattr(exc, "code", "") == "CAPABILITY_NOT_FOUND"
+            )
+        assert raised
+
+        # e) expiring the grant closes the same tool
+        _expire_grant(stack, agent_id)
+        try:
+            tool(customer_id="C-1024")
+            denied = False
+        except Exception:
+            denied = True
+        assert denied
+
+
+def _expire_grant(stack, agent_id):
+    from datetime import UTC, datetime, timedelta
+
+    from ppswitch_db.models import AgentGrantRow
+    from ppswitch_db.session import create_engine_for_url, create_session_factory
+
+    db_url = os.environ.get("PP_SWITCH_E2E_DB_URL")
+    assert db_url, "stack fixture must export PP_SWITCH_E2E_DB_URL"
+    engine = create_engine_for_url(db_url)
+    factory = create_session_factory(engine)
+    with factory() as session:
+        grant = session.query(AgentGrantRow).filter_by(
+            agent_principal_id=uuid.UUID(agent_id)
+        ).one()
+        grant.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+        session.commit()
+    engine.dispose()

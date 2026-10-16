@@ -9,10 +9,13 @@ from ppswitch_secrets.base import (
     SecretProvider,
     SecretProviderUnavailable,
 )
+from ppswitch_secrets.keyring import DispatchingSecretProvider, KeyringSecretProvider
 from ppswitch_secrets.mock import MockSecretProvider, UnavailableSecretProvider
 
 __all__ = [
     "CredentialMaterial",
+    "DispatchingSecretProvider",
+    "KeyringSecretProvider",
     "MockSecretProvider",
     "SecretProvider",
     "SecretProviderUnavailable",

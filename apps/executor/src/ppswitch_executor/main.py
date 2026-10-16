@@ -23,7 +23,12 @@ from fastapi import FastAPI, Header
 from ppswitch_core.entities import InvocationPlan
 from ppswitch_core.errors import ApiError, ErrorCode
 from ppswitch_policy import validate_arguments
-from ppswitch_secrets import MockSecretProvider, SecretProvider, SecretProviderUnavailable
+from ppswitch_secrets import (
+    DispatchingSecretProvider,
+    MockSecretProvider,
+    SecretProvider,
+    SecretProviderUnavailable,
+)
 from pydantic import BaseModel, Field
 
 from ppswitch_executor.adapters.http_adapter import HttpAdapter
@@ -60,6 +65,10 @@ class ExecuteRequest(BaseModel):
     signature: str = Field(min_length=64, max_length=64)
 
 
+class SecretVerifyRequest(BaseModel):
+    secret_ref: str = Field(min_length=1, max_length=512)
+    auth_scheme: str = "api_key"
+
 class SeedRequest(BaseModel):
     secret_ref: str = Field(min_length=1, max_length=512)
     material: dict[str, Any]
@@ -69,7 +78,10 @@ class SeedRequest(BaseModel):
 class ExecutorState:
     def __init__(self, settings: ExecutorSettings | None = None) -> None:
         self.settings = settings or ExecutorSettings()
-        self.provider: SecretProvider = MockSecretProvider()
+        # FEAT-03: default resolves keyring:// refs from the OS secure
+        # store and everything else from the mock provider (fail-closed
+        # per provider; see packages/secret-provider/keyring.py)
+        self.provider: SecretProvider = DispatchingSecretProvider()
         self.nonces = NonceStore()
         self.http_adapter = HttpAdapter(
             network_checker=check_outbound_target,
@@ -119,6 +131,28 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict:
         return {"status": "ok", "service": "executor", "demo_mode": state.settings.demo_mode}
+
+    @app.post("/internal/v1/secrets/verify")
+    def verify_secret(
+        payload: SecretVerifyRequest, x_internal_token: str = Header(default="")
+    ) -> dict:
+        """FEAT-03: prove a secret_ref resolves before activating a connection.
+
+        Returns ONLY resolution metadata (auth scheme + fingerprint of
+        the payload) - never material.
+        """
+        require_internal_token(x_internal_token)
+        try:
+            credential = state.provider.resolve(payload.secret_ref)
+        except SecretProviderUnavailable as exc:
+            return {"ok": False, "reason": "unavailable", "detail": str(exc)[:200]}
+        import hashlib
+        import json as _json
+
+        digest = hashlib.sha256(
+            _json.dumps(credential.material, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:8]
+        return {"ok": True, "auth_scheme": credential.auth_scheme.value, "fingerprint": digest}
 
     @app.post("/internal/v1/execute")
     def execute(
@@ -197,9 +231,12 @@ def create_app(
         require_internal_token(x_internal_token)
         if not state.settings.demo_mode:
             raise ApiError(ErrorCode.NOT_FOUND, "No such endpoint")
-        if not isinstance(state.provider, MockSecretProvider):
+        seed_target = state.provider
+        if isinstance(seed_target, DispatchingSecretProvider):
+            seed_target = seed_target.mock
+        if not isinstance(seed_target, MockSecretProvider):
             raise ApiError(ErrorCode.FORBIDDEN, "Seeding only supported for the mock provider")
-        state.provider.seed(
+        seed_target.seed(
             payload.secret_ref,
             {"auth_scheme": payload.auth_scheme, "material": payload.material},
         )

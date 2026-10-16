@@ -24,19 +24,19 @@ interface AgentPrincipal {
 const CONTROL_URL_DEFAULT = "http://127.0.0.1:8911";
 
 function mcpConfigs(controlUrl: string, token: string) {
-  const args = ["run", "ppswitch-mcp", "--control-url", controlUrl, "--token", token];
+  // the token travels via ENV, never as a command-line argument (process
+  // listings / shell history must not see it) - the adapter reads
+  // PP_SWITCH_DEV_TOKEN natively
+  const args = ["run", "ppswitch-mcp"];
   const env = {
     PP_SWITCH_CONTROL_URL: controlUrl,
     PP_SWITCH_DEV_TOKEN: token,
   };
+  const server = { command: "uv", args, env };
   return {
-    generic: JSON.stringify({ mcpServers: { "pp-switch": { command: "uv", args } } }, null, 2),
-    claude: JSON.stringify(
-      { mcpServers: { "pp-switch": { command: "uv", args, env } } },
-      null,
-      2,
-    ),
-    cursor: JSON.stringify({ mcpServers: { "pp-switch": { command: "uv", args, env } } }, null, 2),
+    generic: JSON.stringify({ mcpServers: { "pp-switch": server } }, null, 2),
+    claude: JSON.stringify({ mcpServers: { "pp-switch": server } }, null, 2),
+    cursor: JSON.stringify({ mcpServers: { "pp-switch": server } }, null, 2),
   };
 }
 
@@ -212,13 +212,15 @@ export function AgentAccessCard({
             <span className="mono">uv run ppswitch-mcp</span>。
           </p>
           <Button onClick={verify} disabled={busy}>
-            验证连接（以该 Agent 身份列出可见工具）
+            验证连接与授权（以该 Agent 身份列出可见工具）
           </Button>
           {verifyResult !== null && (
             <p className="muted">
               {verifyResult.length === 0
-                ? "该 Agent 当前没有被授权的工具。"
-                : `✅ 连接成功，该 Agent 可见工具：${verifyResult.join(", ")}`}
+                ? "连接与授权验证成功（该 Agent 当前没有被授权的工具）。"
+                : `✅ 连接与授权验证成功，该 Agent 可见工具：${verifyResult.join(", ")}。`}
+              {" "}「工具调用验证」（真实 MCP tools/call）需在 Claude/Cursor
+              中粘贴上面的配置实测——控制面链路已由端到端测试覆盖。
             </p>
           )}
         </div>

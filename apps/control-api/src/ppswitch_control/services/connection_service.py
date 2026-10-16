@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from uuid import UUID
 
+import httpx
 from ppswitch_core.entities import Profile, validate_profile_alignment
 from ppswitch_core.enums import AuthScheme, ConnectionStatus, EndpointStatus
 from ppswitch_core.errors import ApiError, ErrorCode
@@ -18,6 +20,8 @@ from ppswitch_db.models import (
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+_KEYRING_NAME = re.compile(r"^[a-z0-9][a-z0-9/_-]{2,63}$")
+
 
 def create_connection(
     session: Session,
@@ -28,6 +32,7 @@ def create_connection(
     auth_scheme: str,
     scopes: list[str],
     demo_dataset: str | None,
+    secret_name: str | None,
     settings,
 ) -> ConnectionRow:
     service = session.get(ServiceRow, service_id)
@@ -45,7 +50,19 @@ def create_connection(
     )
     session.add(connection)
     session.flush()
-    if settings.demo_mode:
+    if secret_name:
+        # FEAT-03: a REAL local credential stored by the human in the OS
+        # keyring via `ppswitch-secret put <name>`; the value never touches
+        # the control plane. The connection starts PENDING and must be
+        # activated, which asks the executor to prove the ref resolves.
+        if not _KEYRING_NAME.match(secret_name):
+            raise ApiError(
+                ErrorCode.BAD_REQUEST,
+                "secret_name must match [a-z0-9][a-z0-9/_-]{2,63}",
+            )
+        connection.secret_ref = f"keyring://{secret_name}"
+        connection.status = "pending"
+    elif settings.demo_mode:
         # DEV-ONLY deterministic provisioning: the dataset scope is encoded
         # in the opaque ref and the executor derives a synthetic MOCKKEY from
         # it. No secret value ever transits the control plane; production
@@ -304,3 +321,80 @@ def activate_binding(
         )
     )
     return binding
+
+
+def activate_connection(
+    session: Session,
+    *,
+    workspace_id: UUID,
+    principal_id: UUID,
+    connection_id: UUID,
+    settings,
+    executor_client,
+) -> ConnectionRow:
+    """FEAT-03: activate a pending keyring connection.
+
+    Asks the trusted executor to RESOLVE the secret_ref (it returns only
+    a fingerprint, never material). Fail-closed: nothing activates while
+    the store is unreachable or the secret is missing.
+    """
+    connection = session.get(ConnectionRow, connection_id)
+    if connection is None or connection.workspace_id != workspace_id:
+        raise ApiError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found")
+    if connection.status != "pending":
+        raise ApiError(ErrorCode.CONFLICT, f"Connection already {connection.status}")
+    try:
+        response = executor_client.post(
+            f"{settings.executor_url}/internal/v1/secrets/verify",
+            json={"secret_ref": connection.secret_ref, "auth_scheme": connection.auth_scheme},
+            headers={"X-Internal-Token": settings.internal_token},
+        )
+    except httpx.HTTPError as exc:
+        raise ApiError(ErrorCode.SECRET_PROVIDER_UNAVAILABLE, "Executor unreachable") from exc
+    body = response.json() if response.status_code == 200 else {}
+    if not body.get("ok"):
+        raise ApiError(
+            ErrorCode.SECRET_PROVIDER_UNAVAILABLE,
+            "Secret store did not resolve this connection's secret_ref",
+            {"detail": body.get("detail", "unavailable")},
+        )
+    connection.status = "active"
+    session.add(
+        AuditEventRow(
+            workspace_id=workspace_id,
+            actor_id=principal_id,
+            action="connection.activate",
+            decision="allowed",
+            redacted_metadata={
+                "connection_id": str(connection_id),
+                "fingerprint": body.get("fingerprint"),
+            },
+        )
+    )
+    return connection
+
+
+def revoke_connection(
+    session: Session,
+    *,
+    workspace_id: UUID,
+    principal_id: UUID,
+    connection_id: UUID,
+) -> ConnectionRow:
+    """FEAT-03: revoke a connection; the policy engine denies its calls."""
+    connection = session.get(ConnectionRow, connection_id)
+    if connection is None or connection.workspace_id != workspace_id:
+        raise ApiError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found")
+    if connection.status == "revoked":
+        raise ApiError(ErrorCode.CONFLICT, "Connection already revoked")
+    connection.status = "revoked"
+    session.add(
+        AuditEventRow(
+            workspace_id=workspace_id,
+            actor_id=principal_id,
+            action="connection.revoke",
+            decision="allowed",
+            redacted_metadata={"connection_id": str(connection_id)},
+        )
+    )
+    return connection

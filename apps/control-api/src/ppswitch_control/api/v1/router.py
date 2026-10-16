@@ -65,8 +65,10 @@ from ppswitch_control.services.collector_service import (
 )
 from ppswitch_control.services.connection_service import (
     activate_binding,
+    activate_connection,
     create_connection,
     create_profile,
+    revoke_connection,
 )
 from ppswitch_control.services.delegation_service import _active_delegation_exists
 from ppswitch_control.services.discovery_service import import_discovery_document
@@ -175,6 +177,9 @@ class ConnectionCreate(BaseModel):
     auth_scheme: str = "api_key"
     scopes: list[str] = Field(default_factory=list)
     demo_dataset: str | None = None  # dev-only: which mock dataset this connection maps to
+    # FEAT-03: name of a secret the human stored with `ppswitch-secret put`
+    # (keyring://<name>); takes precedence over demo_dataset
+    secret_name: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9/_-]{2,63}$")
 
 
 class ProfileCreate(BaseModel):
@@ -964,6 +969,7 @@ def create_connection_route(
         auth_scheme=payload.auth_scheme,
         scopes=payload.scopes,
         demo_dataset=payload.demo_dataset,
+        secret_name=payload.secret_name,
         settings=settings,
     )
     # public projection only: never secret_ref
@@ -978,6 +984,43 @@ def create_connection_route(
         },
         201,
     )
+
+
+@router.post("/connections/{connection_id}/activate")
+def activate_connection_route(
+    connection_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("connections.write")),
+    session: Session = Depends(get_session),
+):
+    """FEAT-03: prove the keyring secret resolves, then activate."""
+    settings = request.app.state.settings
+    executor_client: httpx.Client = request.app.state.executor_client
+    connection = activate_connection(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        connection_id=connection_id,
+        settings=settings,
+        executor_client=executor_client,
+    )
+    return ok(request, {"id": str(connection.id), "status": connection.status})
+
+
+@router.post("/connections/{connection_id}/revoke")
+def revoke_connection_route(
+    connection_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("connections.write")),
+    session: Session = Depends(get_session),
+):
+    connection = revoke_connection(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        connection_id=connection_id,
+    )
+    return ok(request, {"id": str(connection.id), "status": connection.status})
 
 
 @router.get("/connections")
