@@ -25,6 +25,7 @@ from ppswitch_db.models import (
     CapabilityVersionRow,
     CollectorPairingRow,
     ConnectionRow,
+    DatabaseTargetRow,
     EndpointRow,
     InvocationRow,
     ObservationRow,
@@ -69,6 +70,12 @@ from ppswitch_control.services.connection_service import (
     create_connection,
     create_profile,
     revoke_connection,
+)
+from ppswitch_control.services.db_target_service import (
+    approve_db_target,
+    create_db_target,
+    disable_db_target,
+    discover_db_metadata,
 )
 from ppswitch_control.services.delegation_service import _active_delegation_exists
 from ppswitch_control.services.discovery_service import import_discovery_document
@@ -150,6 +157,21 @@ class EndpointCreate(BaseModel):
     status: str = "pending"  # demo seeds may create approved endpoints directly
 
 
+class DatabaseTargetCreate(BaseModel):
+    """FEAT-04: coordinates of one read-only PostgreSQL target.
+
+    Only non-secret coordinates: the read-only account itself lives in the
+    OS keyring (``ppswitch-secret put --scheme postgres``) and is attached
+    to the service via a postgres Connection, FEAT-03 style.
+    """
+
+    engine: str = "postgres"
+    host: str = Field(min_length=1, max_length=253)
+    port: int = Field(ge=1, le=65535)
+    database: str = Field(min_length=1, max_length=63)
+    allowed_schemas: list[str] = Field(min_length=1, max_length=16)
+
+
 class CapabilityCreate(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$")
     display_name: str = Field(min_length=1, max_length=128)
@@ -184,7 +206,9 @@ class ConnectionCreate(BaseModel):
 
 class ProfileCreate(BaseModel):
     service_id: UUID
-    endpoint_id: UUID
+    # None = FEAT-04 database profile (postgres connection, authorized by
+    # the service's approved db_target instead of an HTTP endpoint)
+    endpoint_id: UUID | None = None
     connection_id: UUID
     name: str = Field(min_length=1, max_length=128)
 
@@ -223,6 +247,9 @@ class OperationTestRequest(BaseModel):
     """FEAT-02 wizard: sample arguments for a live operation test."""
 
     arguments: dict = Field(default_factory=dict)
+    # FEAT-04: for database operations the wizard sends the structured
+    # query spec it configured (columns/filters); never SQL text
+    db_execution: dict | None = None
 
 
 class AgentPrincipalCreate(BaseModel):
@@ -438,6 +465,147 @@ def list_endpoints(
             }
             for r in rows
         ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# FEAT-04: database targets - an INDEPENDENT approval type for read-only
+# PostgreSQL access (never interchangeable with HTTP endpoint approvals)
+# ---------------------------------------------------------------------------
+
+
+def _db_target_view(row: DatabaseTargetRow) -> dict:
+    return {
+        "id": str(row.id),
+        "service_id": str(row.service_id),
+        "engine": row.engine,
+        "host": row.host,
+        "port": row.port,
+        "database": row.database,
+        "allowed_schemas": row.allowed_schemas or [],
+        "status": row.status,
+    }
+
+
+@router.post("/services/{service_id}/db-targets")
+def create_db_target_route(
+    service_id: UUID,
+    payload: DatabaseTargetCreate,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("dbtargets.write")),
+    session: Session = Depends(get_session),
+):
+    target = create_db_target(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        service_id=service_id,
+        engine=payload.engine,
+        host=payload.host,
+        port=payload.port,
+        database=payload.database,
+        allowed_schemas=payload.allowed_schemas,
+    )
+    return ok(request, _db_target_view(target), 201)
+
+
+@router.get("/services/{service_id}/db-targets")
+def list_db_targets_route(
+    service_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("dbtargets.read")),
+    session: Session = Depends(get_session),
+):
+    rows = session.scalars(
+        select(DatabaseTargetRow)
+        .where(
+            DatabaseTargetRow.workspace_id == auth.workspace_id,
+            DatabaseTargetRow.service_id == service_id,
+        )
+        .order_by(DatabaseTargetRow.created_at)
+    ).all()
+    return ok(request, [_db_target_view(r) for r in rows])
+
+
+@router.post("/db-targets/{target_id}/approve")
+def approve_db_target_route(
+    target_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("dbtargets.approve")),
+    session: Session = Depends(get_session),
+):
+    """Reviewer-grade approval of a pending database target; outside demo
+    mode the creator cannot self-approve (PR-SEC-01 posture)."""
+    target = approve_db_target(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        target_id=target_id,
+        demo_mode=request.app.state.settings.demo_mode,
+    )
+    return ok(request, _db_target_view(target))
+
+
+@router.post("/db-targets/{target_id}/disable")
+def disable_db_target_route(
+    target_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("dbtargets.disable")),
+    session: Session = Depends(get_session),
+):
+    """Revocation: plans built afterwards are rejected at plan-build time."""
+    target = disable_db_target(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        target_id=target_id,
+    )
+    return ok(request, _db_target_view(target))
+
+
+@router.post("/db-targets/{target_id}/discover")
+def discover_db_target_route(
+    target_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("discovery.import")),
+    session: Session = Depends(get_session),
+):
+    """Discover schema/view metadata through the trusted executor and turn
+    it into candidate operations (drafts - nothing publishes without the
+    wizard + review chain)."""
+    settings = request.app.state.settings
+    executor_client: httpx.Client = request.app.state.executor_client
+    document = discover_db_metadata(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        target_id=target_id,
+        settings=settings,
+        executor_client=executor_client,
+    )
+    target = session.get(DatabaseTargetRow, target_id)
+    assert target is not None  # discover_db_metadata already 404'd otherwise
+    summary = import_discovery_document(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        service_id=target.service_id,
+        source_type="db",
+        document=document,
+    )
+    return ok(
+        request,
+        {
+            "job_id": summary.import_id,
+            "state": "completed",
+            "objects": len(document.get("objects", [])),
+            "truncated": bool(document.get("truncated")),
+            "candidates": summary.candidates,
+            "operations_created": summary.operations_created,
+            "operations_updated": summary.operations_updated,
+            "observations_created": summary.observations_created,
+        },
+        201,
     )
 
 
@@ -658,6 +826,7 @@ def get_operation(
         request,
         {
             "id": str(operation.id),
+            "service_id": str(operation.service_id),
             "method": operation.method,
             "normalized_path": operation.normalized_path,
             "status": operation.status,
@@ -697,6 +866,7 @@ def test_operation_route(
         arguments=payload.arguments,
         settings=settings,
         executor_client=executor_client,
+        db_execution=payload.db_execution,
     )
     return ok(request, result)
 
@@ -1090,7 +1260,7 @@ def list_profiles(
             {
                 "id": str(r.id),
                 "service_id": str(r.service_id),
-                "endpoint_id": str(r.endpoint_id),
+                "endpoint_id": str(r.endpoint_id) if r.endpoint_id else None,
                 "connection_id": str(r.connection_id),
                 "name": r.name,
                 "status": r.status,

@@ -32,7 +32,7 @@ export function ProfilesPage() {
     try {
       await api.post("/api/v1/profiles", {
         service_id: serviceId,
-        endpoint_id: endpointId,
+        endpoint_id: endpointId || null,
         connection_id: connectionId,
         name: profileName,
       });
@@ -148,7 +148,7 @@ export function ProfilesPage() {
           </Field>
           <Field label="endpoint">
             <select value={endpointId} onChange={(e) => setEndpointId(e.target.value)}>
-              <option value="">select...</option>
+              <option value="">无 endpoint（数据库 Profile）</option>
               {endpoints
                 .filter((e) => e.service_id === serviceId)
                 .map((e) => (
@@ -165,7 +165,8 @@ export function ProfilesPage() {
                 .filter((c) => c.service_id === serviceId)
                 .map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.id.slice(0, 8)}… ({c.status})
+                    {(c.auth_scheme === "postgres" ? "postgres · " : "") +
+                      c.id.slice(0, 8)}… ({c.status})
                   </option>
                 ))}
             </select>
@@ -177,7 +178,7 @@ export function ProfilesPage() {
               placeholder="CRM Demo A"
             />
           </Field>
-          <Button onClick={createProfile} disabled={!serviceId || !endpointId || !connectionId || !profileName}>
+          <Button onClick={createProfile} disabled={!serviceId || !connectionId || !profileName}>
             Create profile
           </Button>
         </div>

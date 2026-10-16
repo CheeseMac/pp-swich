@@ -167,6 +167,58 @@ def check_outbound_target(
     return TargetCheck(url=url, host=host, port=port, resolved_ips=resolved)
 
 
+@dataclass
+class DbTargetCheck:
+    host: str
+    port: int
+    pinned_ip: str
+
+
+def check_db_target(host: str, port: int, *, resolver=_resolve) -> DbTargetCheck:
+    """FEAT-04: admission for one PostgreSQL target from a SIGNED plan.
+
+    This is a DEDICATED path - it shares the deny rules below but never the
+    HTTP allowlist machinery - so approving a database target can never be
+    used to smuggle HTTP egress, and an HTTP endpoint approval never
+    authorizes a database connection (docs/38 section 1, acceptance 6).
+    Like HTTP direct mode, the resolved address is validated and the caller
+    connects to the validated literal (no second DNS lookup).
+
+    The host reaching this function always comes from the frozen plan, which
+    the control plane derived from an APPROVED db_target row - that approval
+    is the review record that lets private/loopback addresses through (same
+    reasoning as rule 3 above). Hard-denied ranges stay denied regardless.
+    """
+    if not host or len(host) > 253 or any(
+        c
+        not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+        for c in host
+    ):
+        raise ApiError(ErrorCode.UPSTREAM_FAILURE, "Database target host is not valid")
+    if not 1 <= int(port) <= 65535:
+        raise ApiError(ErrorCode.UPSTREAM_FAILURE, "Database target port is not valid")
+    resolved = resolver(host)
+    if not resolved:
+        raise ApiError(
+            ErrorCode.UPSTREAM_FAILURE, "Database target host cannot be resolved"
+        )
+    for ip_text in resolved:
+        try:
+            ip = canonical_ip(ipaddress.ip_address(ip_text))
+        except ValueError as exc:
+            raise ApiError(
+                ErrorCode.UPSTREAM_FAILURE, "Database target resolved to invalid address"
+            ) from exc
+        if _hard_denied(ip):
+            raise ApiError(
+                ErrorCode.UPSTREAM_FAILURE,
+                "Database target resolves to a permanently denied address range",
+                {"host": host, "reason": "link_local_or_metadata"},
+            )
+    ipv4 = [ip for ip in resolved if "." in ip]
+    return DbTargetCheck(host=host, port=int(port), pinned_ip=(ipv4 or resolved)[0])
+
+
 class PinningNetworkBackend(httpcore.SyncBackend):
     """True connect-time IP pinning (review2 P0-3 / SEC-034).
 

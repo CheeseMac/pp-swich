@@ -35,6 +35,7 @@
 - 出口强制与部署（第七轮 PR-DEP-14）：allOf 重复属性一律拒绝、解析器四类资源预算（结构深度/节点数/数组长度/内联体积）与 $ref 兄弟键拒绝（NET-13-F1/F2）；IPv6 包装地址（IPv4-mapped/NAT64）按内嵌 IPv4 判定实现元数据段硬拒；三层出口隔离（应用层策略 + Compose executor 无出口网络 + 主机防火墙样例）、密钥轮换分页重加密与多实例运维规程、升级不可逆与备份加密说明（deploy/ + docs/28）
 - 受控出口网关与验收矩阵（第八轮 PR-QA-06）：egress-gateway（CONNECT-only 正向代理，独立 allowlist、canonical_ip 归一、元数据段硬拒、端到端 TLS 不解密、全量审计日志）使隔离的 executor 具备真实外部 API 调用能力（DEP-14-F1）；防火墙样例修正至 FORWARD/DOCKER-USER 路径，control 默认仅绑定回环、mock-crm 移入 demo profile；测试数据库参数化（PP_SWITCH_TEST_DB_URL），CI 新增 PostgreSQL 矩阵（QA-PG-01..05）与 Docker 部署验收（QA-DEP-01..05，deploy/verify-deployment.sh）
 - 生产就绪 Gate R1（综合审计后）：永久拒绝策略集覆盖非 link-local 云元数据端点（阿里云 100.100.100.200 / AWS fd00:ec2::254，allowlist 亦不可豁免）、出口端口边界（裸主机名仅 443，非标准端口需显式 host:port）、网关工作负载认证（Proxy-Authorization）与并发/速率/时长配额、control 移出出口网络并加容器加固（read_only/cap_drop/限额）、PostgreSQL 部署模板（deploy/docker-compose.postgres.yml）、部署验收升级为完整 Agent→Executor→Gateway→外部后端→响应守卫全链路 + 网关审计日志断言 + 可达性对照 + 全链合成凭证 canary（docs/30）
+- 功能冲刺 FEAT-04 首切片（只读 PostgreSQL 数据库发现，docs/39）：db-target 独立审批类型（reviewer 级、不可自审，与 HTTP endpoint 审批互不可代用）→ executor 以 keyring 只读账号（GRANT SELECT only，激活实连并拒 superuser 级）发现 approved schemas 元数据（仅列名+类型，未批 schema 双层不可见）→ FEAT-02 向导 db 变体人工确认参数与字段 → 既有 review/verify/publish → Agent 授权调用**固定参数化只读工具**：execution 为结构化 spec（无任何 SQL 文本面，语句由 executor psycopg 标识符合成，签名计划也无法夹带），超时/行数/大小三重限额，撤销 target 或连接即刻 403，DB 口令全程只在 keyring 与 executor
 
 **计划中、尚未实现（请勿当作已有能力）：**
 
@@ -145,6 +146,7 @@ uv run python scripts/seed-demo.py
 | **评审交接包入库（含 FEAT-03 验收剧本）** | **[36-REVIEW-HANDOFF](docs/36-REVIEW-HANDOFF-2026-10-15.md)** |
 | **评审回应：连接所有权 + Agent 组合验收** | **[37-REVIEW-RESPONSE](docs/37-REVIEW-RESPONSE-2026-10-16.md)** |
 | **交接文档（FEAT-04 会话入口）** | **[38-HANDOVER-FEAT04](docs/38-HANDOVER-FEAT04.md)** |
+| **FEAT-04 只读 PostgreSQL 发现交付记录** | **[39-FEAT04-DB-DISCOVERY](docs/39-FEAT04-DB-DISCOVERY.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 

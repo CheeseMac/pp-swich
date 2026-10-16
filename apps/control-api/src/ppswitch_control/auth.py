@@ -110,6 +110,12 @@ ACTION_MIN_ROLE: dict[str, int] = {
     "endpoints.write": 0,
     "endpoints.approve": 1,   # review3 SEC-047: approving network targets
                               # is a reviewer-grade action, not member-grade
+    # FEAT-04: database targets are a SEPARATE approval type; same grades
+    # as their HTTP counterparts
+    "dbtargets.read": 0,
+    "dbtargets.write": 0,
+    "dbtargets.approve": 1,
+    "dbtargets.disable": 1,
     "discovery.import": 0,
     "operations.read": 0,
     "operations.verify": 0,

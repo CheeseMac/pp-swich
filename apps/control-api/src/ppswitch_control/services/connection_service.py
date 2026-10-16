@@ -94,16 +94,16 @@ def create_profile(
     workspace_id: UUID,
     principal_id: UUID,
     service_id: UUID,
-    endpoint_id: UUID,
+    endpoint_id: UUID | None,
     connection_id: UUID,
     name: str,
 ) -> ProfileRow:
     service = session.get(ServiceRow, service_id)
-    endpoint = session.get(EndpointRow, endpoint_id)
+    endpoint = session.get(EndpointRow, endpoint_id) if endpoint_id is not None else None
     connection = session.get(ConnectionRow, connection_id)
-    if any(x is None for x in (service, endpoint, connection)):
+    if connection is None or service is None or (endpoint_id is not None and endpoint is None):
         raise ApiError(ErrorCode.PROFILE_NOT_FOUND, "Referenced objects not found")
-    assert service and endpoint and connection
+    assert service is not None and connection is not None
     # review PR-SEC-01 (SEC-021): a profile may only bind a Connection
     # owned by the creating principal - no cross-user assembly
     if connection.owner_principal_id != principal_id:
@@ -119,7 +119,7 @@ def create_profile(
     try:
         validate_profile_alignment(
             domain_profile,
-            EndpointRow_to_entity(endpoint),
+            EndpointRow_to_entity(endpoint) if endpoint is not None else None,
             ConnectionRow_to_entity(connection),
             ServiceRow_to_entity(service),
         )
@@ -233,16 +233,24 @@ def activate_binding(
         raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Profile is disabled")
 
     connection = session.get(ConnectionRow, profile.connection_id)
-    endpoint = session.get(EndpointRow, profile.endpoint_id)
+    endpoint = (
+        session.get(EndpointRow, profile.endpoint_id) if profile.endpoint_id else None
+    )
     if connection is None or connection.status != "active":
         raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Connection is not active")
     # execution-time re-check (PR-SEC-01): the bound profile's
     # connection must still belong to the profile owner
     if connection.owner_principal_id != profile.owner_principal_id:
         raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Connection ownership mismatch")
-    if endpoint is None or endpoint.status != "approved":
-        raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Endpoint is not approved")
-    if endpoint.service_id != profile.service_id or connection.service_id != profile.service_id:
+    if profile.endpoint_id is not None:
+        # HTTP profiles need an approved endpoint; endpoint-less (FEAT-04
+        # database) profiles are authorized by the service's approved
+        # db_target, re-checked at plan-build time on every invocation
+        if endpoint is None or endpoint.status != "approved":
+            raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Endpoint is not approved")
+        if endpoint.service_id != profile.service_id:
+            raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Profile references misaligned objects")
+    if connection.service_id != profile.service_id:
         raise ApiError(ErrorCode.PROFILE_NOT_ALLOWED, "Profile references misaligned objects")
 
     existing = session.get(
@@ -337,6 +345,10 @@ def activate_connection(
     Asks the trusted executor to RESOLVE the secret_ref (it returns only
     a fingerprint, never material). Fail-closed: nothing activates while
     the store is unreachable or the secret is missing.
+
+    FEAT-04: postgres connections additionally prove a REAL read-only
+    connection - the executor opens the service's approved database target
+    with the keyring credential and refuses superuser-class roles.
     """
     connection = session.get(ConnectionRow, connection_id)
     if (
@@ -349,10 +361,35 @@ def activate_connection(
         raise ApiError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found")
     if connection.status != "pending":
         raise ApiError(ErrorCode.CONFLICT, f"Connection already {connection.status}")
+    verify_payload: dict = {
+        "secret_ref": connection.secret_ref,
+        "auth_scheme": connection.auth_scheme,
+    }
+    if connection.auth_scheme == AuthScheme.POSTGRES.value:
+        from ppswitch_db.models import DatabaseTargetRow
+
+        target = session.scalars(
+            select(DatabaseTargetRow).where(
+                DatabaseTargetRow.workspace_id == workspace_id,
+                DatabaseTargetRow.service_id == connection.service_id,
+                DatabaseTargetRow.status == "approved",
+            )
+        ).first()
+        if target is None:
+            raise ApiError(
+                ErrorCode.CONFLICT,
+                "Activate a postgres connection only after the service's "
+                "database target is approved",
+            )
+        verify_payload["db_target"] = {
+            "host": target.host,
+            "port": target.port,
+            "database": target.database,
+        }
     try:
         response = executor_client.post(
             f"{settings.executor_url}/internal/v1/secrets/verify",
-            json={"secret_ref": connection.secret_ref, "auth_scheme": connection.auth_scheme},
+            json=verify_payload,
             headers={"X-Internal-Token": settings.internal_token},
         )
     except httpx.HTTPError as exc:
@@ -362,7 +399,7 @@ def activate_connection(
         raise ApiError(
             ErrorCode.SECRET_PROVIDER_UNAVAILABLE,
             "Secret store did not resolve this connection's secret_ref",
-            {"detail": body.get("detail", "unavailable")},
+            {"detail": body.get("detail") or body.get("reason") or "unavailable"},
         )
     connection.status = "active"
     session.add(

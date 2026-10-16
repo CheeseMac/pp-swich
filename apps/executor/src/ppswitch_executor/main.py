@@ -4,6 +4,10 @@ The only process that resolves credentials and opens outbound connections.
 Internal API (docs/07-API-SPEC.md section 7):
 
 - ``POST /internal/v1/execute`` - run one signed, pre-approved plan;
+- ``POST /internal/v1/secrets/verify`` - FEAT-03 activation proof (postgres
+  credentials also prove a real read-only connection to the approved target);
+- ``POST /internal/v1/db/discover`` - FEAT-04 schema/view metadata discovery
+  for an approved database target (names + types only);
 - ``POST /internal/v1/admin/seeds`` - demo-only provisioning channel for
   the MockSecretProvider (models the out-of-band trusted channel that
   OpenBao provisioning would use in production);
@@ -21,6 +25,7 @@ from typing import Any
 
 from fastapi import FastAPI, Header
 from ppswitch_core.entities import InvocationPlan
+from ppswitch_core.enums import AuthScheme
 from ppswitch_core.errors import ApiError, ErrorCode
 from ppswitch_policy import validate_arguments
 from ppswitch_secrets import (
@@ -31,6 +36,8 @@ from ppswitch_secrets import (
 )
 from pydantic import BaseModel, Field
 
+from ppswitch_executor.adapters.db_adapter import DbAdapter, discover_objects
+from ppswitch_executor.adapters.db_adapter import verify_readonly_role as verify_db_role
 from ppswitch_executor.adapters.http_adapter import HttpAdapter
 from ppswitch_executor.adapters.mock_adapter import MockAdapter
 from ppswitch_executor.network_policy import check_outbound_target
@@ -68,6 +75,22 @@ class ExecuteRequest(BaseModel):
 class SecretVerifyRequest(BaseModel):
     secret_ref: str = Field(min_length=1, max_length=512)
     auth_scheme: str = "api_key"
+    # FEAT-04: for postgres credentials the control plane also sends the
+    # APPROVED target coordinates so activation can prove a real read-only
+    # connection (host/port/database from the approved db_target row)
+    db_target: dict | None = None
+
+
+class DbDiscoverRequest(BaseModel):
+    """FEAT-04: metadata discovery for an approved db target.
+
+    Carries the frozen non-secret coordinates (host/port/database/
+    allowed_schemas) plus the keyring secret_ref; returns column names and
+    types only - never data, never credentials.
+    """
+
+    secret_ref: str = Field(min_length=1, max_length=512)
+    target: dict
 
 class SeedRequest(BaseModel):
     secret_ref: str = Field(min_length=1, max_length=512)
@@ -88,6 +111,7 @@ class ExecutorState:
             egress_proxy_url=self.settings.egress_proxy_url,
         )
         self.mock_adapter = MockAdapter()
+        self.db_adapter = DbAdapter()
 
 
 def error_body(code: str, message: str, details: dict | None = None) -> dict:
@@ -140,12 +164,29 @@ def create_app(
 
         Returns ONLY resolution metadata (auth scheme + fingerprint of
         the payload) - never material.
+
+        FEAT-04: postgres credentials must additionally open the APPROVED
+        target with a non-superuser role (a real read-only connection);
+        anything less fails closed and the connection stays pending.
         """
         require_internal_token(x_internal_token)
         try:
             credential = state.provider.resolve(payload.secret_ref)
         except SecretProviderUnavailable as exc:
             return {"ok": False, "reason": "unavailable", "detail": str(exc)[:200]}
+        if payload.db_target is not None:
+            # FEAT-04: a db_target in the request means the control plane
+            # is activating a postgres connection - the credential must BE
+            # postgres material and open the target with a read-only role
+            if credential.auth_scheme != AuthScheme.POSTGRES:
+                return {
+                    "ok": False,
+                    "reason": "credential_not_postgres",
+                    "detail": "db_target verification requires postgres material",
+                }
+            role_ok, role_reason = verify_db_role(payload.db_target, credential)
+            if not role_ok:
+                return {"ok": False, "reason": role_reason}
         import hashlib
         import json as _json
 
@@ -153,6 +194,27 @@ def create_app(
             _json.dumps(credential.material, sort_keys=True).encode("utf-8")
         ).hexdigest()[:8]
         return {"ok": True, "auth_scheme": credential.auth_scheme.value, "fingerprint": digest}
+
+    @app.post("/internal/v1/db/discover")
+    def db_discover(
+        payload: DbDiscoverRequest, x_internal_token: str = Header(default="")
+    ) -> dict:
+        """FEAT-04: schema/view metadata discovery for an approved target.
+
+        Trusted-side only: the schemas listed in the (control-approved)
+        target gate the information_schema query, the read-only role gates
+        visibility, and only column names/types leave this endpoint.
+        """
+        require_internal_token(x_internal_token)
+        try:
+            credential = state.provider.resolve(payload.secret_ref)
+        except SecretProviderUnavailable as exc:
+            raise ApiError(ErrorCode.SECRET_PROVIDER_UNAVAILABLE, str(exc)) from exc
+        if credential.auth_scheme != AuthScheme.POSTGRES:
+            raise ApiError(
+                ErrorCode.BAD_REQUEST, "Database discovery requires a postgres credential"
+            )
+        return discover_objects(payload.target, credential)
 
     @app.post("/internal/v1/execute")
     def execute(
@@ -180,6 +242,26 @@ def create_app(
                 ErrorCode.SECRET_PROVIDER_UNAVAILABLE,
                 "Mock credential refs are rejected outside demo mode",
             )
+
+        # FEAT-04: database plans run through the dedicated read-only
+        # adapter; the HTTP endpoint/mock selection below never applies.
+        # The signed plan froze the APPROVED target coordinates; the
+        # adapter re-checks the schema allowlist and its own policy layer.
+        if plan.db_query is not None:
+            try:
+                credential = state.provider.resolve(plan.secret_ref)
+            except SecretProviderUnavailable as exc:
+                raise ApiError(ErrorCode.SECRET_PROVIDER_UNAVAILABLE, str(exc)) from exc
+            raw = state.db_adapter.execute(plan, credential)
+            guarded = project_response(
+                raw, plan.allow_fields, output_schema=plan.output_schema
+            )
+            return {
+                "invocation_id": str(plan.invocation_id),
+                "result": guarded.result,
+                "dropped_fields": guarded.dropped_fields,
+            }
+
         if plan.endpoint_base_url.startswith("mock://"):
             if not state.settings.demo_mode:
                 raise ApiError(

@@ -16,6 +16,7 @@ from ppswitch_db.models import (
     ServiceRow,
 )
 from ppswitch_discovery.parsers.collector import build_candidates_from_collector
+from ppswitch_discovery.parsers.db import build_candidates_from_db_metadata
 from ppswitch_discovery.parsers.har import build_candidates_from_har
 from ppswitch_discovery.parsers.openapi import build_candidates_from_openapi
 from sqlalchemy import select
@@ -59,6 +60,10 @@ def import_discovery_document(
         result = build_candidates_from_openapi(document)
     elif source_type == "collector":
         result = build_candidates_from_collector(document)
+    elif source_type == "db":
+        # FEAT-04: trusted-side metadata document (names + types only),
+        # already restricted to the approved target's allowed_schemas
+        result = build_candidates_from_db_metadata(document)
     else:
         raise ApiError(ErrorCode.BAD_REQUEST, "Unsupported source_type")
 
@@ -138,6 +143,9 @@ def import_discovery_document(
                     # re-sanitized the zero-value skeletons
                     "collector-skeleton/1"
                     if source_type == "collector"
+                    # FEAT-04: trusted-side metadata (names + types only)
+                    else "db-metadata/1"
+                    if source_type == "db"
                     else "har-sanitizer/1"
                 ),
             )

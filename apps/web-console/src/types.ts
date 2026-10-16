@@ -63,10 +63,32 @@ export interface Connection {
 export interface Profile {
   id: string;
   service_id: string;
-  endpoint_id: string;
+  endpoint_id: string | null;
   connection_id: string;
   name: string;
   status: string;
+}
+
+export interface DbTarget {
+  id: string;
+  service_id: string;
+  engine: string;
+  host: string;
+  port: number;
+  database: string;
+  allowed_schemas: string[];
+  status: string;
+}
+
+export interface DbDiscoverySummary {
+  job_id: string;
+  state: string;
+  objects: number;
+  truncated: boolean;
+  candidates: number;
+  operations_created: number;
+  operations_updated: number;
+  observations_created: number;
 }
 
 export interface ActiveBinding {
@@ -141,6 +163,7 @@ export interface OperationVersionView {
 
 export interface OperationDetail {
   id: string;
+  service_id: string;
   method: string;
   normalized_path: string;
   status: string;

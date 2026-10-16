@@ -30,8 +30,15 @@ def main(argv: list[str] | None = None) -> int:
     put = sub.add_parser("put", help="store or update a secret")
     put.add_argument("name", help="keyring name, e.g. crm-key-a")
     put.add_argument(
-        "--scheme", default="api_key", choices=["api_key", "bearer"],
+        "--scheme", default="api_key", choices=["api_key", "bearer", "postgres"],
         help="auth scheme (default api_key)",
+    )
+    # FEAT-04: postgres material = {"user", "password"}; the username is
+    # not secret material but travels with the payload so the executor can
+    # open the connection without any DB coordinate entering the keyring
+    put.add_argument(
+        "--user", default=None,
+        help="database role name (scheme=postgres only)",
     )
     put.add_argument(
         "--value-stdin", action="store_true",
@@ -51,16 +58,30 @@ def main(argv: list[str] | None = None) -> int:
     provider = KeyringSecretProvider()
     try:
         if args.command == "put":
-            if args.value_stdin:
-                value = sys.stdin.readline().rstrip("\r\n")
+            if args.scheme == "postgres":
+                user = args.user or input(f"database role for {args.name!r}: ").strip()
+                if not user:
+                    print("empty role name refused", file=sys.stderr)
+                    return 2
+                if args.value_stdin:
+                    password = sys.stdin.readline().rstrip("\r\n")
+                else:
+                    password = getpass.getpass(f"password for role {user!r}: ")
+                if not password:
+                    print("empty secret refused", file=sys.stderr)
+                    return 2
+                material = {"user": user, "password": password}
             else:
-                value = getpass.getpass(f"secret value for {args.name!r}: ")
-            if not value:
-                print("empty secret refused", file=sys.stderr)
-                return 2
-            material = (
-                {"token": value} if args.scheme == "bearer" else {"api_key": value}
-            )
+                if args.value_stdin:
+                    value = sys.stdin.readline().rstrip("\r\n")
+                else:
+                    value = getpass.getpass(f"secret value for {args.name!r}: ")
+                if not value:
+                    print("empty secret refused", file=sys.stderr)
+                    return 2
+                material = (
+                    {"token": value} if args.scheme == "bearer" else {"api_key": value}
+                )
             provider.put(args.name, args.scheme, material)
             digest = provider.fingerprint(args.name)
             print(f"stored ppswitch/{args.name} (fingerprint {digest})")

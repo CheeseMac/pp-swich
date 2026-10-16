@@ -145,6 +145,42 @@ class EndpointRow(Base):
     )
 
 
+class DatabaseTargetRow(Base):
+    """FEAT-04: one approved read-only database target.
+
+    An INDEPENDENT approval type from HTTP endpoints: this row authorizes
+    discovery and fixed parameterized read-only tools against exactly
+    (engine, host, port, database, allowed_schemas) - nothing else. The
+    read-only credential itself never appears here; it follows the FEAT-03
+    keyring path on the service's postgres Connection.
+    """
+
+    __tablename__ = "db_targets"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending','approved','disabled')", "status"),
+        CheckConstraint("engine IN ('postgres')", "engine"),
+        ForeignKeyConstraint(
+            ["service_id", "workspace_id"], ["services.id", "services.workspace_id"]
+        ),
+        UniqueConstraint("id", "service_id"),
+        UniqueConstraint("service_id", "engine", "host", "port", "database"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    service_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    engine: Mapped[str] = mapped_column(String(16), nullable=False, default="postgres")
+    host: Mapped[str] = mapped_column(String(253), nullable=False)
+    port: Mapped[int] = mapped_column(Integer, nullable=False)
+    database: Mapped[str] = mapped_column(String(63), nullable=False)
+    allowed_schemas: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 class ObservationRow(Base):
     __tablename__ = "observations"
     __table_args__ = (
@@ -288,7 +324,8 @@ class ConnectionRow(Base):
             "status IN ('pending','active','expired','revoked')", "status"
         ),
         CheckConstraint(
-            "auth_scheme IN ('none','api_key','bearer','oauth2','basic')", "auth_scheme"
+            "auth_scheme IN ('none','api_key','bearer','oauth2','basic','postgres')",
+            "auth_scheme",
         ),
         ForeignKeyConstraint(
             ["service_id", "workspace_id"], ["services.id", "services.workspace_id"]
@@ -327,11 +364,14 @@ class ProfileRow(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    workspace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    service_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
-    endpoint_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    connection_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    owner_principal_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    service_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    # FEAT-04: nullable for database profiles - a DB profile binds a postgres
+    # connection and is authorized by the service's approved DatabaseTarget
+    # instead of an HTTP endpoint
+    endpoint_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    connection_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    owner_principal_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(16), default="enabled")
     created_at: Mapped[datetime] = mapped_column(

@@ -3,6 +3,8 @@ import { api } from "../api";
 import type {
   CollectorObservation,
   CollectorPairing,
+  DbDiscoverySummary,
+  DbTarget,
   ImportSummary,
   Operation,
   Service,
@@ -25,6 +27,16 @@ export function DiscoveryPage({ publishToWizard }: { publishToWizard: (operation
   const [freshCode, setFreshCode] = useState<CollectorPairing | null>(null);
   const [collectorBusy, setCollectorBusy] = useState(false);
 
+  // database targets (FEAT-04)
+  const [dbServiceId, setDbServiceId] = useState("");
+  const [dbTargets, setDbTargets] = useState<DbTarget[]>([]);
+  const [dbHost, setDbHost] = useState("127.0.0.1");
+  const [dbPort, setDbPort] = useState("5432");
+  const [dbDatabase, setDbDatabase] = useState("");
+  const [dbSchemas, setDbSchemas] = useState("");
+  const [dbSummary, setDbSummary] = useState<DbDiscoverySummary | null>(null);
+  const [dbBusy, setDbBusy] = useState(false);
+
   const load = () => {
     api.get<Service[]>("/api/v1/services").then(setServices).catch(setError);
     api.get<Operation[]>("/api/v1/operations").then(setOperations).catch(setError);
@@ -40,8 +52,15 @@ export function DiscoveryPage({ publishToWizard }: { publishToWizard: (operation
         .then(setPairings)
         .catch(setError);
     }
+    if (dbServiceId) {
+      api
+        .get<DbTarget[]>(`/api/v1/services/${dbServiceId}/db-targets`)
+        .then(setDbTargets)
+        .catch(setError);
+    }
   };
   useEffect(load, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [dbServiceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const createPairing = async () => {
     if (!collectorServiceId) return;
@@ -90,6 +109,50 @@ export function DiscoveryPage({ publishToWizard }: { publishToWizard: (operation
       load();
     } catch (e) {
       setError(e);
+    }
+  };
+
+  const createDbTarget = async () => {
+    if (!dbServiceId) return;
+    setDbBusy(true);
+    setError(null);
+    setDbSummary(null);
+    try {
+      await api.post(`/api/v1/services/${dbServiceId}/db-targets`, {
+        engine: "postgres",
+        host: dbHost,
+        port: Number(dbPort),
+        database: dbDatabase,
+        allowed_schemas: dbSchemas
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      });
+      setDbDatabase("");
+      setDbSchemas("");
+      load();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setDbBusy(false);
+    }
+  };
+
+  const dbTargetAction = async (target: DbTarget, action: "approve" | "disable" | "discover") => {
+    setDbBusy(true);
+    setError(null);
+    setDbSummary(null);
+    try {
+      if (action === "discover") {
+        setDbSummary(await api.post<DbDiscoverySummary>(`/api/v1/db-targets/${target.id}/discover`));
+      } else {
+        await api.post(`/api/v1/db-targets/${target.id}/${action}`);
+      }
+      load();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setDbBusy(false);
     }
   };
 
@@ -167,6 +230,101 @@ export function DiscoveryPage({ publishToWizard }: { publishToWizard: (operation
               ))}
             </tbody>
           </table>
+        )}
+      </Card>
+      <Card title="Database discovery (FEAT-04 · read-only PostgreSQL)">
+        <p className="muted" style={{ marginTop: 0 }}>
+          数据库目标是与 HTTP endpoint 完全独立的审批类型：批准一行
+          = 只授权 (host, port, database, allowed_schemas) 的只读发现与固定
+          参数化工具。只读账号先在本机执行{" "}
+          <span className="mono">ppswitch-secret put crm-db-ro --scheme postgres</span>{" "}
+          入 OS keyring，再到 Connections 页建 postgres 连接并激活。
+        </p>
+        <div className="form-row">
+          <Field label="service">
+            <select
+              value={dbServiceId}
+              onChange={(e) => {
+                setDbServiceId(e.target.value);
+                setDbTargets([]);
+                setDbSummary(null);
+              }}
+            >
+              <option value="">select...</option>
+              {services.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.slug}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="host">
+            <input value={dbHost} onChange={(e) => setDbHost(e.target.value)} />
+          </Field>
+          <Field label="port">
+            <input value={dbPort} onChange={(e) => setDbPort(e.target.value)} />
+          </Field>
+          <Field label="database">
+            <input value={dbDatabase} placeholder="crm" onChange={(e) => setDbDatabase(e.target.value)} />
+          </Field>
+          <Field label="allowed schemas (逗号分隔)">
+            <input value={dbSchemas} placeholder="crm" onChange={(e) => setDbSchemas(e.target.value)} />
+          </Field>
+          <Button
+            onClick={createDbTarget}
+            disabled={!dbServiceId || !dbDatabase || !dbSchemas.trim() || dbBusy}
+          >
+            {dbBusy ? "..." : "创建目标 (pending)"}
+          </Button>
+        </div>
+        {dbTargets.length > 0 && (
+          <table style={{ marginTop: 10 }}>
+            <thead>
+              <tr>
+                <th>host:port / database</th>
+                <th>allowed schemas</th>
+                <th>status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {dbTargets.map((t) => (
+                <tr key={t.id}>
+                  <td className="mono">
+                    {t.host}:{t.port}/{t.database}
+                  </td>
+                  <td className="mono">{t.allowed_schemas.join(", ")}</td>
+                  <td>
+                    <StatusBadge status={t.status} />
+                  </td>
+                  <td className="row">
+                    {t.status === "pending" && (
+                      <Button variant="ghost" disabled={dbBusy} onClick={() => dbTargetAction(t, "approve")}>
+                        Approve (reviewer)
+                      </Button>
+                    )}
+                    {t.status === "approved" && (
+                      <>
+                        <Button disabled={dbBusy} onClick={() => dbTargetAction(t, "discover")}>
+                          发现 schema/视图
+                        </Button>
+                        <Button variant="ghost" disabled={dbBusy} onClick={() => dbTargetAction(t, "disable")}>
+                          Disable
+                        </Button>
+                      </>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {dbSummary && (
+          <p className="muted">
+            Discovery {dbSummary.job_id}: {dbSummary.objects} objects,{" "}
+            {dbSummary.candidates} candidates（{dbSummary.operations_created} created）.
+            {dbSummary.truncated ? " 结果被截断——缩小 allowed_schemas 后重试。" : ""}
+          </p>
         )}
       </Card>
       <Card title="Import sanitized file">

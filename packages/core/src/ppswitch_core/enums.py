@@ -20,6 +20,16 @@ class EndpointStatus(StrEnum):
     DISABLED = "disabled"
 
 
+class DatabaseTargetStatus(StrEnum):
+    """FEAT-04: database targets are a SEPARATE approval type from HTTP
+    endpoints (docs/38 section 1, acceptance item 6) - an approved HTTP
+    endpoint must never authorize a database connection and vice versa."""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    DISABLED = "disabled"
+
+
 class OperationStatus(StrEnum):
     OBSERVED = "observed"
     INFERRED = "inferred"
@@ -84,3 +94,8 @@ class AuthScheme(StrEnum):
     BEARER = "bearer"
     OAUTH2 = "oauth2"
     BASIC = "basic"
+    # FEAT-04: read-only PostgreSQL account. The keyring material holds
+    # {"user": ..., "password": ...}; the non-secret target coordinates
+    # (host/port/database) live on the approved DatabaseTarget, never in
+    # the credential or the connection string.
+    POSTGRES = "postgres"

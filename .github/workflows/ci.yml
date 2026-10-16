@@ -89,8 +89,8 @@ jobs:
       - name: Sync workspace
         run: uv sync --all-packages
 
-      - name: Pytest on PostgreSQL (QA-PG-01..05)
-        run: uv run pytest packages/db/tests apps/control-api/tests tests/e2e -q
+      - name: Pytest on PostgreSQL (QA-PG-01..05 + FEAT-04 read-only DB)
+        run: uv run pytest packages/db/tests apps/control-api/tests apps/executor/tests tests/e2e -q
 
   docker-deploy:
     name: PR-QA-06 docker deploy matrix

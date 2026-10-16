@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import type {
   CapabilityDetailView,
+  DbTarget,
   Operation,
   OperationDetail,
   OperationTestResult,
@@ -17,6 +18,11 @@ import { AgentAccessCard } from "../components/AgentAccessCard";
  * Steps are STATUS-DRIVEN (resumable across sessions and principals):
  * review/verify/publish intentionally require a principal other than the
  * creator - the wizard says so and the reviewer simply reopens this page.
+ *
+ * FEAT-04: database operations (normalized_path "/db/{schema}/{view}")
+ * generate a STRUCTURED db execution spec instead of HTTP path/query/body
+ * mappings - the server composes the parameterized read-only SELECT, the
+ * console never writes SQL.
  */
 
 type ParamSource = "path" | "query" | "body";
@@ -58,6 +64,11 @@ export function WizardPage({ seedOperationId, clearSeed }: {
   const [detail, setDetail] = useState<OperationDetail | null>(null);
   const [serviceById, setServiceById] = useState<Record<string, Service>>({});
 
+  // FEAT-04: db operations pick an approved target of the same service
+  const [isDbOp, setIsDbOp] = useState(false);
+  const [dbTargets, setDbTargets] = useState<DbTarget[]>([]);
+  const [dbTargetId, setDbTargetId] = useState("");
+
   // step 2: tool configuration
   const [toolName, setToolName] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -93,9 +104,20 @@ export function WizardPage({ seedOperationId, clearSeed }: {
     setError(null);
     setTestResult(null);
     setCapability(null);
+    setIsDbOp(false);
+    setDbTargets([]);
+    setDbTargetId("");
     try {
       const op = await api.get<OperationDetail>(`/api/v1/operations/${id}`);
       setDetail(op);
+      const dbOp = op.normalized_path.startsWith("/db/");
+      setIsDbOp(dbOp);
+      if (dbOp) {
+        const targets = await api.get<DbTarget[]>(`/api/v1/services/${op.service_id}/db-targets`);
+        setDbTargets(targets);
+        const approved = targets.filter((t) => t.status === "approved");
+        setDbTargetId(approved[0]?.id ?? "");
+      }
       const latest = op.versions[op.versions.length - 1];
       const queryProps = propsOf((latest?.input_schema as unknown as { query?: unknown })?.query);
       const bodyProps = propsOf((latest?.input_schema as unknown as { body?: unknown })?.body);
@@ -120,7 +142,11 @@ export function WizardPage({ seedOperationId, clearSeed }: {
       const namespace = seed ? slugPart(serviceById[seed.service_id]?.slug ?? "svc") : "svc";
       setToolName(`${namespace}.${slugPart(`${op.method} ${op.normalized_path}`)}`);
       setDisplayName(`${op.method} ${op.normalized_path}`);
-      setDescription(`Discovered from traffic: ${op.method} ${op.normalized_path}`);
+      setDescription(
+        dbOp
+          ? `Read-only database lookup discovered from schema metadata: ${op.normalized_path}`
+          : `Discovered from traffic: ${op.method} ${op.normalized_path}`,
+      );
     } catch (e) {
       setError(e);
     }
@@ -133,6 +159,27 @@ export function WizardPage({ seedOperationId, clearSeed }: {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedOperationId]);
+
+  // FEAT-04: structured db execution derived from the same param/field
+  // selections; the server (not the console) composes the parameterized
+  // read-only SELECT from these fields - SQL is never written here
+  const dbExecution = useMemo(() => {
+    if (!isDbOp || !detail || !dbTargetId) return null;
+    const parts = detail.normalized_path.split("/"); // ["", "db", schema, view]
+    const schema = parts[2] ?? "";
+    const view = parts[3] ?? "";
+    const filters = Object.fromEntries(
+      params.filter((p) => p.source === "query" && p.included).map((p) => [p.name, p.name]),
+    );
+    return {
+      target_id: dbTargetId,
+      schema,
+      view,
+      columns: allowFields,
+      filters,
+      limit: 2,
+    };
+  }, [isDbOp, detail, dbTargetId, params, allowFields]);
 
   const generated = useMemo(() => {
     const included = params.filter((p) => p.included);
@@ -167,6 +214,7 @@ export function WizardPage({ seedOperationId, clearSeed }: {
 
   const createDraft = async () => {
     if (!detail) return;
+    if (isDbOp && !dbExecution) return;
     setBusy(true);
     setError(null);
     try {
@@ -180,7 +228,7 @@ export function WizardPage({ seedOperationId, clearSeed }: {
         output_schema: latest?.output_schema ?? {},
         allow_fields: allowFields,
         risk_level: risk,
-        execution: generated.execution,
+        execution: isDbOp ? { db: dbExecution } : generated.execution,
       });
       const full = await api.get<CapabilityDetailView>(`/api/v1/capabilities/${created.id}`);
       setCapability(full);
@@ -216,6 +264,7 @@ export function WizardPage({ seedOperationId, clearSeed }: {
       setTestResult(
         await api.post<OperationTestResult>(`/api/v1/operations/${detail.id}/test`, {
           arguments: arguments_,
+          ...(isDbOp && dbExecution ? { db_execution: dbExecution } : {}),
         }),
       );
     } catch (e) {
@@ -310,6 +359,22 @@ export function WizardPage({ seedOperationId, clearSeed }: {
             <Field label="描述">
               <input value={description} onChange={(e) => setDescription(e.target.value)} />
             </Field>
+            {isDbOp && (
+              <Field label="数据库目标 (approved)">
+                <select value={dbTargetId} onChange={(e) => setDbTargetId(e.target.value)}>
+                  {dbTargets
+                    .filter((t) => t.status === "approved")
+                    .map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.host}:{t.port}/{t.database} · {t.allowed_schemas.join(", ")}
+                      </option>
+                    ))}
+                  {dbTargets.filter((t) => t.status === "approved").length === 0 && (
+                    <option value="">（该服务还没有 approved 的数据库目标）</option>
+                  )}
+                </select>
+              </Field>
+            )}
             <table>
               <thead>
                 <tr>
@@ -355,7 +420,9 @@ export function WizardPage({ seedOperationId, clearSeed }: {
               </tbody>
             </table>
             <p className="muted" style={{ marginTop: 8 }}>
-              响应字段（Agent 可见）：
+              {isDbOp
+                ? "数据库工具：勾选的「响应字段」进入固定 SELECT 列清单，勾选的「参数」成为 WHERE 等值过滤（建议勾上必填）；SQL 由服务端合成，控制台永不提交 SQL 文本。"
+                : "响应字段（Agent 可见）："}
               {allFields.map((f) => (
                 <label key={f} style={{ marginRight: 10 }}>
                   <input
@@ -375,14 +442,19 @@ export function WizardPage({ seedOperationId, clearSeed }: {
               <summary className="muted">生成的输入 schema 与执行映射（预览）</summary>
               <pre className="mono" style={{ fontSize: 11 }}>
                 {JSON.stringify(
-                  { input_schema: generated.inputSchema, execution: generated.execution },
+                  isDbOp
+                    ? { input_schema: generated.inputSchema, execution: { db: dbExecution } }
+                    : { input_schema: generated.inputSchema, execution: generated.execution },
                   null,
                   2,
                 )}
               </pre>
             </details>
             <div className="form-row" style={{ marginTop: 10 }}>
-              <Button onClick={createDraft} disabled={busy || !toolName.includes(".")}>
+              <Button
+                onClick={createDraft}
+                disabled={busy || !toolName.includes(".") || (isDbOp && !dbExecution)}
+              >
                 创建草稿
               </Button>
               <Button variant="ghost" onClick={() => setShowSelection(true)}>

@@ -417,8 +417,15 @@ def invoke_capability(
     if profile is None:
         raise ApiError(ErrorCode.NO_ACTIVE_PROFILE, "Bound profile is inconsistent")
     connection = session.get(ConnectionRow, profile.connection_id)
-    endpoint = session.get(EndpointRow, profile.endpoint_id)
-    if connection is None or endpoint is None:
+    # FEAT-04: database profiles have no endpoint; their network
+    # authorization is the service's APPROVED db_target, re-checked below
+    # when the db execution spec is frozen into the plan
+    endpoint = (
+        session.get(EndpointRow, profile.endpoint_id) if profile.endpoint_id else None
+    )
+    if connection is None:
+        raise ApiError(ErrorCode.NO_ACTIVE_PROFILE, "Bound profile is inconsistent")
+    if endpoint is None and profile.endpoint_id is not None:
         raise ApiError(ErrorCode.NO_ACTIVE_PROFILE, "Bound profile is inconsistent")
 
     # --- policy decision (deny by default)
@@ -428,7 +435,13 @@ def invoke_capability(
         agent_has_grant=True,
         connection_status=ConnectionStatus(connection.status),
         profile_status=ProfileStatus(profile.status),
-        endpoint_status=EndpointStatus(endpoint.status),
+        # endpoint-less profiles are database profiles: the policy point of
+        # "approved target" moves to the db_target check in resolve_db_query
+        endpoint_status=(
+            EndpointStatus(endpoint.status)
+            if endpoint is not None
+            else EndpointStatus.APPROVED
+        ),
         risk_level=RiskLevel(version_row.risk_level),
     )
     if not decision.allowed:
@@ -459,36 +472,88 @@ def invoke_capability(
         raise exc
 
     execution = version_row.execution or {}
-    plan = InvocationPlan(
-        invocation_id=uuid_module.uuid4(),
-        capability_name=capability.name,
-        capability_version=version_row.version,
-        capability_version_id=version_row.id,
-        operation=InvocationPlanOperation(
-            method=operation.method,
-            path_template=operation.normalized_path,
-            path_map=execution.get("path", {}),
-            query_template=execution.get("query", {}),
-            body_template=execution.get("body", {}),
-        ),
-        endpoint_base_url=endpoint.base_url,
-        approved_hosts=endpoint.approved_hosts or [],
-        auth_scheme=AuthScheme(connection.auth_scheme),
-        secret_ref=connection.secret_ref,
-        allow_fields=version_row.allow_fields or [],
-        input_schema=version_row.input_schema or {},
-        output_schema=version_row.output_schema or {},
-        arguments=arguments,
-        workspace_id=workspace_id,
-        principal_id=principal_id,
-        agent_id=principal_id if principal_kind == PrincipalKind.AGENT.value else None,
-        risk_level=RiskLevel(version_row.risk_level),
-        policy_version=version_row.policy_ref,
-        arguments_digest=_arguments_digest(arguments),
-        idempotency_key=idempotency_key,
-        deadline_epoch_s=time.time() + PLAN_DEADLINE_S,
-        nonce=uuid_module.uuid4().hex + uuid_module.uuid4().hex[:8],
-    )
+    db_spec = execution.get("db") if isinstance(execution, dict) else None
+    if db_spec is not None:
+        # FEAT-04: structured read-only query frozen from the approved
+        # db_target; no SQL ever leaves the control plane (the executor
+        # composes the parameterized SELECT from these validated fields)
+        if not isinstance(db_spec, dict):
+            raise ApiError(ErrorCode.BAD_REQUEST, "db execution must be an object")
+        from ppswitch_control.services.db_target_service import resolve_db_query
+
+        db_query = resolve_db_query(
+            session,
+            workspace_id=workspace_id,
+            spec=db_spec,
+            service_id=operation.service_id,
+            connection=connection,
+        )
+        plan = InvocationPlan(
+            invocation_id=uuid_module.uuid4(),
+            capability_name=capability.name,
+            capability_version=version_row.version,
+            capability_version_id=version_row.id,
+            operation=InvocationPlanOperation(
+                method=operation.method,
+                path_template=operation.normalized_path,
+            ),
+            endpoint_base_url="",
+            approved_hosts=[],
+            auth_scheme=AuthScheme(connection.auth_scheme),
+            secret_ref=connection.secret_ref,
+            allow_fields=version_row.allow_fields or [],
+            input_schema=version_row.input_schema or {},
+            output_schema=version_row.output_schema or {},
+            arguments=arguments,
+            workspace_id=workspace_id,
+            principal_id=principal_id,
+            agent_id=principal_id if principal_kind == PrincipalKind.AGENT.value else None,
+            risk_level=RiskLevel(version_row.risk_level),
+            policy_version=version_row.policy_ref,
+            arguments_digest=_arguments_digest(arguments),
+            idempotency_key=idempotency_key,
+            deadline_epoch_s=time.time() + PLAN_DEADLINE_S,
+            nonce=uuid_module.uuid4().hex + uuid_module.uuid4().hex[:8],
+            db_query=db_query,
+        )
+    else:
+        if endpoint is None:
+            # an HTTP execution against an endpoint-less (database) profile
+            # must fail closed rather than dial anything
+            raise ApiError(
+                ErrorCode.FORBIDDEN,
+                "This capability requires an HTTP endpoint profile",
+            )
+        plan = InvocationPlan(
+            invocation_id=uuid_module.uuid4(),
+            capability_name=capability.name,
+            capability_version=version_row.version,
+            capability_version_id=version_row.id,
+            operation=InvocationPlanOperation(
+                method=operation.method,
+                path_template=operation.normalized_path,
+                path_map=execution.get("path", {}),
+                query_template=execution.get("query", {}),
+                body_template=execution.get("body", {}),
+            ),
+            endpoint_base_url=endpoint.base_url,
+            approved_hosts=endpoint.approved_hosts or [],
+            auth_scheme=AuthScheme(connection.auth_scheme),
+            secret_ref=connection.secret_ref,
+            allow_fields=version_row.allow_fields or [],
+            input_schema=version_row.input_schema or {},
+            output_schema=version_row.output_schema or {},
+            arguments=arguments,
+            workspace_id=workspace_id,
+            principal_id=principal_id,
+            agent_id=principal_id if principal_kind == PrincipalKind.AGENT.value else None,
+            risk_level=RiskLevel(version_row.risk_level),
+            policy_version=version_row.policy_ref,
+            arguments_digest=_arguments_digest(arguments),
+            idempotency_key=idempotency_key,
+            deadline_epoch_s=time.time() + PLAN_DEADLINE_S,
+            nonce=uuid_module.uuid4().hex + uuid_module.uuid4().hex[:8],
+        )
     plan_payload = json.loads(plan.model_dump_json())
     plan_payload["profile_label"] = profile.name
 
@@ -499,7 +564,7 @@ def invoke_capability(
         "profile_id": str(profile.id),
         "profile_label": profile.name,
         "connection_id": str(connection.id),
-        "endpoint_id": str(endpoint.id),
+        "endpoint_id": str(endpoint.id) if endpoint is not None else None,
         "capability_name": capability.name,
         "capability_version": version_row.version,
         "policy_version": version_row.policy_ref,

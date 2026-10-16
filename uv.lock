@@ -1124,6 +1124,7 @@ dependencies = [
     { name = "ppswitch-core" },
     { name = "ppswitch-policy" },
     { name = "ppswitch-secrets" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "uvicorn" },
 ]
 
@@ -1134,6 +1135,7 @@ requires-dist = [
     { name = "ppswitch-core", editable = "packages/core" },
     { name = "ppswitch-policy", editable = "packages/policy-engine" },
     { name = "ppswitch-secrets", editable = "packages/secret-provider" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 

@@ -90,6 +90,20 @@ def create_capability(
     session.add(capability)
     session.flush()
 
+    # FEAT-04: validate the STRUCTURED db execution spec at draft time so
+    # the wizard gets immediate feedback; full lifecycle checks (approved
+    # target, schema allowlist, postgres connection) re-run on EVERY
+    # invocation at plan-build time - a stale draft can never execute
+    if isinstance(execution, dict) and "db" in execution:
+        from ppswitch_control.services.db_target_service import validate_db_execution_spec
+
+        validate_db_execution_spec(execution["db"])
+        if set(execution) - {"db"}:
+            raise ApiError(
+                ErrorCode.BAD_REQUEST,
+                "A db execution mapping cannot mix HTTP mapping keys",
+            )
+
     required_scopes = sorted(set(required_scopes or []))
     draft_payload = {
         "operation_version_id": str(latest_op_version.id),
