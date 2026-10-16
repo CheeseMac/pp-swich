@@ -88,6 +88,21 @@ e2e 7 项）在 CI `postgresql` job（PR-QA-06）执行，本机无 PG 环境
   目标库含 `crm`（表+视图，ro 角色 GRANT SELECT）与 `hr`
   （薪资表，**未授权**）；ro 角色每轮随机名 + `MOCKKEY-` 前缀合成口令。
 
+### CI 迭代记录（如实）
+
+- 首跑（`edef1f9`）postgres job 失败，仅两类根因：
+  ① alembic 会把 target_metadata 的 naming convention **再叠加**到
+  `drop_constraint` 传入的约束名上（PG 分支按名删除变成
+  `ck_connections_ck_connections_auth_scheme` 双前缀而找不到）——
+  PG 分支改为原生 `ALTER TABLE ... DROP/ADD CONSTRAINT` 直呼字面名；
+  ② `pg_sleep()` 返回 void 不能作视图列——用 plpgsql 文本函数包装并
+  放进视图 WHERE（防规划器剪枝）。
+- 二跑（`b660f85`）剩三个测试问题：ro 角色 teardown 需先
+  `DROP OWNED BY`（表授权依赖）；"越权列"篡改用例实际被更早的
+  "过滤列必须属于选中列"规则拒绝（比预期更严，改断言）；
+  非法 plan payload 在 executor 收敛为干净的 422（原为未处理 500）。
+- 三跑（`e2e2a77`）CI 五 job + Security gates 全绿。
+
 ## 5. 已知边界（后续切片，未偷渡）
 
 1. **单行 get-by-key 语义**：limit≤2、多行即拒。列表/分页查询工具、
