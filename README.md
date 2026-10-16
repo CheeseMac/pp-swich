@@ -142,6 +142,7 @@ uv run python scripts/seed-demo.py
 | **FEAT-02 发布向导交付记录** | **[33-FEAT-02-WIZARD](docs/33-FEAT-02-WIZARD.md)** |
 | **FEAT-05A Agent 一键接入交付记录** | **[34-FEAT-05A-AGENT-ACCESS](docs/34-FEAT-05A-AGENT-ACCESS.md)** |
 | **FEAT-03 本地 Keyring 交付记录** | **[35-FEAT-03-KEYRING](docs/35-FEAT-03-KEYRING.md)** |
+| **评审交接包入库（含 FEAT-03 验收剧本）** | **[36-REVIEW-HANDOFF](docs/36-REVIEW-HANDOFF-2026-10-15.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 

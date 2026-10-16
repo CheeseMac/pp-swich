@@ -17,3 +17,5 @@
 *.png binary
 *.jpg binary
 *.ico binary
+# review handoff packages must keep their original bytes (MANIFEST checksums)
+docs/review-handoff/** -text
