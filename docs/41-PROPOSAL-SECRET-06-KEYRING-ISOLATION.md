@@ -1,159 +1,270 @@
-# 41 · 设计提案：共享执行器的 Keyring 多用户所有权隔离（SECRET-06 前置项）
+# 41 · SECRET-06 共享 Keyring 多用户隔离——审批修订稿
 
-> **状态：待审批**（2026-10-16 提交，基线 `f2ecc6a`）。
-> 依批复流程：本提案获批前不动工实现代码。范围**不含**新的数据库
-> 能力、不含 OpenBao（那是 SECRET-06 的生产 Provider 腿，需真实基础
-> 设施，另案）。
+> **状态：修订待复核；实施尚未获批。** 本版取代 `7404fbe` 原稿（按 2026-10-16 设计审批四项裁决修订），落库于 `ff40ba9` 之后。§0–§7 为修订正文；**§8 为开发侧按 §6 要求提交的接口契约附录**（仅固定实现机制，不改变 §0–§7 安全语义）。继承此前所有已关闭 FEAT 的正式批复，不重审历史问题。
+>
+> 本文保留原 §0–§7、G1–G4、A1–A8，新增补充验收 T1–T8。仅针对单 control、单 executor、单共享 OS Keyring 命名空间的部署。
 
-## 0. 一句话结论
+## 0. 结论
 
-为 `keyring://` 凭证引入**名字级属主声明（claim）+ 激活时指纹钉扎
-（fingerprint pinning）**：谁第一次成功激活一个 keyring 名字，谁就
-拥有它；其他人不得通过 API 引用该名字使用其凭证；激活时记录的
-材质指纹冻结进签名计划，executor 执行前重算比对——激活后任何
-材质替换（无论善意恶意）立即 fail-closed。
+采用 **可证明属主的机器级名字 claim + 完整 HMAC 材质钉扎 + claim 代际撤销** 三层保障。
 
-## 1. 缺口（当前代码的精确形态）
+* **个人可信单用户模式**：原 `ppswitch-secret put → Activate` 流程不变。
+* **共享执行器模式**：首次 claim 必须有独立属主证明，不能使用 first-activation-wins；未完成 claim 或钉扎者不可执行。
+* **任意执行前**：executor 验证签名计划、当前 claim 代际/钉扎版本及材质完整性；不匹配 fail-closed。
+* 本文是提交评审的修订设计，**不是开工许可证**。
 
-FEAT-03 交付的 keyring 路径在**单用户个人 Alpha** 下是安全的；
-在**共享执行器**（多用户、同一 OS 账户/机器 → 同一 OS keyring
-命名空间 `ppswitch/<name>`）下存在横向借用：
+## 1. 原始缺口与修复目标
 
-| # | 现状 | 位置 |
-| --- | --- | --- |
-| G1 | 任意成员可为任意 keyring 名字建连接——`secret_name` 只做格式校验，无属主绑定 | `connection_service.create_connection`（`_KEYRING_NAME` 仅正则） |
-| G2 | B 建自己的连接引用 A 存的名字 `crm-key-a`，B 激活自己的连接（owner=B 通过校验），executor 能解析到 A 的条目 → **B 以 A 的凭证调用** | 激活链无名字级授权 |
-| G3 | executor verify 已返回材质指纹，但控制面**丢弃**（仅进审计）——没有任何完整性钉扎 | `connection_service.activate_connection` |
-| G4 | 执行路径不校验材质指纹——激活后 keyring 条目被替换（重 put），后续调用**静默使用新材质**（投毒方向：B 覆盖 A 的名字喂入 B 的凭证，A 不知情地用 B 的身份） | executor `/execute` |
+| 编号 | 原始缺口 | 修复 |
+|---|---|---|
+| G1 | 任意成员可引用任意 Keyring 名创建 Connection | create/activate 校验机器级 claim；未 claim 仅允许 pending |
+| G2 | B 借自己的 Connection 调用 A 的凭证 | 首次 claim 使用独立所有权证明；Agent 委托不绕过 |
+| G3 | verify 短指纹被丢弃，未形成安全钉扎 | 保存完整密钥化 MAC；关联 Connection 与签名计划 |
+| G4 | Keyring 重 put 后，执行可能静默使用新材质 | executor 每次使用前完整性比较、版本新鲜性检查 |
 
-边界承认（AGENTS.md 规则 8 的口径）：共享 OS 账户本身能直接读写
-OS keyring——本提案**不**声称对抗 OS 层攻击者；它关闭的是**通过
-pp-switch API 的借用与投毒**（G1–G4），这是产品层可负责的部分。
-OS 层隔离与生产 SecretProvider 属 SECRET-06 的 OpenBao 腿（另案）。
+共享 OS 账户本身能直接读写 Keyring，不在本次可防御的 OS 攻击范围；本切片关闭的是经 pp-switch API 的凭证借用与静默材质替换。
 
-## 2. 威胁模型（本提案针对的攻击）
+## 2. 威胁模型和不可变条件
 
-- **借用（borrow）**：成员 B 通过 API 让 executor 以 A 存储的凭证
-  发起调用（G1/G2）。B 全程不需要 OS 层访问——只靠控制面 API。
-- **投毒（poison）**：B 覆盖 A 已在用的 keyring 名字（B 有 OS 访问
-  或共享机器上的写权限），A 的后续调用静默改用 B 的材质（G3/G4）。
-  防护目标是**检测并 fail-closed**（替换必然改变指纹），不是阻止
-  OS 层写入（超出产品边界）。
-- **跨工作区借用**：同一控制面部署下多个 workspace 共享同一
-  executor/机器——名字是机器级命名空间，claim 必须机器级生效
-  （见 §3.1 部署假设）。
+**主体**：human principal、Agent、workspace admin、独立 infra operator、可信 control/executor 和共享 Keyring。
 
-不在范围：OS 账户层读取/删除条目；跨机器撤销同步；控制面与
-executor 之间的 mTLS（生产另有方案）。
+1. 名字可读或凭证可由 executor 解析，均**不构成属主证明**。
+2. claim 的唯一范围为 `(namespace_id, canonical_name)`，在单个 executor 的全部 workspace 之间生效。
+3. 创建、激活、计划组装、executor 的 execute / verify / PostgreSQL discover 路径都必须统一执行授权与完整性检查。
+4. 缺少 owner/claim、缺少 pin、凭证变化、旧 claim 版本、证明失效或撤销状态不可确认时，一律 fail-closed。
+5. workspace admin **不能**凭本工作区角色跨工作区释放 claim；只有 claim owner 或独立的 infra operator 才有相应操作资格。
+6. 配对证明、凭证与内部完整 MAC 不向普通 API、Agent、UI 或审计日志暴露。
+7. 释放后新开始的执行必须拒绝旧计划；已完成最后检查、已经发起的外部请求不能保证撤回，该边界须明示和审计。
 
 ## 3. 设计
 
-### 3.1 属主声明（claim）——授权层
+### 3.1 名字级 claim：授权层
 
-新表 `keyring_claims`（迁移 9）：
+**迁移 9：** `keyring_claims` 至少包含下列逻辑字段：
 
-| 列 | 说明 |
+| 字段 | 含义 |
+|---|---|
+| `namespace_id`, `name` | 组合唯一键；单 executor 仍记录不可混淆的命名空间 ID |
+| `owner_principal_id`, `owner_workspace_id` | 归属人和工作区 |
+| `auth_scheme` | `postgres` 等凭证方案 |
+| `generation`, `pin_version` | 单调递增的归属和材质版本 |
+| `material_tag` | 完整 HMAC，视为敏感派生数据，不进入日志 |
+| `status`, `claimed_at`, `updated_at` | active / pending_rotation / released / disputed 等状态及时间 |
+| `proof_consumed_id` | 仅记录已消费证明的不可逆 ID，不存明文证明 |
+
+Connection 新增关联的 `claim_generation`、`pin_version`、`secret_material_tag` 与待恢复状态；签名计划冻结 `namespace_id/name/generation/pin_version/material_tag`。删除或释放也必须保留不可回退的代际计数/墓碑，避免 ABA 旧计划复活。
+
+**共享模式首次归属的两种合法机制：**
+
+1. executor 受保护本机通道签发一次性配对证明：绑定 namespace、规范化名字、principal、workspace 与用途 `keyring.claim`；建议有效期 5 分钟；高熵、单次原子消费、禁止跨对象重放。获取证明必须要求真实本机操作权限，**普通远程 control API 不得替任何 principal 无条件签发证明**。
+2. 独立的 infra operator 通过受保护运维入口预登记。workspace admin 不自动拥有此权限。
+
+CLI `ppswitch-secret put` 继续保持原样；可另增 `claim-pair` 本机命令。任何证明不得出现在 argv、URL、普通日志或截图中，可通过受保护 stdin/隐藏输入提交。
+
+**服务端执行契约：**
+
+- `create_connection`：已有 claim 且 owner 不符时返回 `403 KEYRING_NAME_CLAIMED`，隐藏 owner；共享模式下未 claim 只允许创建不可执行 `pending_claim` Connection。
+- `activate_connection`：证明验真 + executor verify + 数据库原子 claim/CAS；竞争时只允许一个 winner。verify 失败不留下 active claim，证明不得二次消费。避免网络调用时长时间持数据库锁，可采用短期 reservation + CAS 最终提交。
+- `plan assembly`：复查 Connection owner、claim owner/workspace、generation、pin_version、active 状态，并冻结至签名计划；继续执行已有 Agent 委托/能力权限。
+- executor **最后检查**：验证计划签名，获取可信的最新 claim 代际/撤销状态，重新解析 Keyring 材质并校验 MAC，然后才能发起外部请求。单 executor 可使用受信 control 新鲜性查询或等价强一致同步；不能只验证旧签名计划或无限期缓存。
+- **释放**：owner 自助 release；infra operator 强制 release。推进 generation、失效旧 Connections/Profile 绑定和计划，同步撤销信息。其他 workspace admin 不可跨域释放。新 owner 必须重新证明并 claim。
+- **所有读凭证入口**（包括 FEAT-04 postgres 激活、发现、调用）使用统一校验，不增数据库能力。
+
+### 3.2 完整性钉扎：执行层
+
+短 `sha256[:8]` **只作 CLI 展示**，禁止参与安全决策。内部建议使用：
+
+`HMAC-SHA-256(K_pin, encode(namespace_id, name, auth_scheme, canonical_material))`
+
+其中 `K_pin` 仅由可信 executor / 专门密钥服务持有，与签名票据密钥分离；`encode` 必须无歧义。`canonical_material` 覆盖实际认证的所有字段（如 postgres user 和 password），不存或记录明文；完整 32 字节 MAC 使用恒时比较。
+
+verify 将完整标签通过受保护内部协议供 control 存储；签名计划冻结标签；executor 每次材质使用前重算，不符返回 `503 SECRET_FINGERPRINT_MISMATCH` 并拒绝。MAC 视为凭证派生的敏感信息，禁止 Agent/API/审计披露；不因其为 HMAC 就公开它。
+
+`K_pin` 遗失、轮换或 executor 重启后无法验证历史标签时，必须 fail-closed，并通过受保护密钥恢复或显式重新激活恢复；不得自动信任新材质。MAC 校验保护“被修改后不静默使用”，不阻止 OS 账户持有人直接更改存储。
+
+**owner re-put 状态机：**
+
+`active(vN)` → 本机 re-put → 后续执行不匹配立即拒绝 → owner 发起重新 Activate 得到 `409 SECRET_ROTATION_CONFIRMATION_REQUIRED` → owner 通过已认证的显式确认操作重新验证并原子提交 `active(vN+1)`。
+
+轮换确认需要限时、绑定 owner/Connection/旧版本；不能允许外部提交任意新 tag。旧计划、旧 pin 和其他仍引用旧版本的 Connection 均拒绝，直到按权限重新验证。不得把材质变化自动当作换 owner 机会。
+
+### 3.3 迁移、模式及部署
+
+- **迁移 9**：遗留 Connection 的 tag 为 NULL，shared 模式标记 `requires_claim_recovery`，禁止调用和发现；不得保留“NULL 即跳过 pin”的回退。
+- 原先按名字最早创建的 principal **仅可生成候选属主清单**，不能自动建立有效 claim。多人/多工作区引用同名时标 `disputed`，交 infra operator 调解；须明确证明并重新 verify 才恢复。
+- 单用户可信部署保留现有用户体验；`mock://` 不受此安全范围影响，但正常 CI 回归必须保持全绿。
+- shared 部署启动时缺少唯一 namespace、受信撤销新鲜性接口、pin key 或 claim 数据库时，拒绝启用共享 Keyring 能力。仅支持单 control/单 executor，不支持多个 control 各自维护 claim 而共享一台 executor。
+- FEAT-04 PostgreSQL 的 TLS、SELECT-only 部署要求，以及 Gate R1 既有门禁保持不变。
+
+### 3.4 错误、审计和竞态
+
+| 场景 | 对外结果 |
+|---|---|
+| 他人已 claim 的名字 | `403 KEYRING_NAME_CLAIMED`，不泄露 owner |
+| 材质不一致 | `503 SECRET_FINGERPRINT_MISMATCH` |
+| owner 已 re-put 但未确认 | `409 SECRET_ROTATION_CONFIRMATION_REQUIRED` |
+| 配对证明过期/重放或无法确认撤销新鲜性 | 拒绝；不回显证明 |
+| 旧计划、已释放或未钉扎连接 | 拒绝；不得隐式恢复 |
+
+审计 `claim.created/rejected/released/recovered/rotation_pending/rotated`，记录操作者、作用域、相关 ID、状态与时间；不记凭证明文、配对证明、完整 tag、其他 workspace 的 owner。名字必要时使用脱敏标识。释放和执行竞态以 executor 的**最终授权检查**为界：释放提交后才抵达该检查的执行必须拒绝，检查前已发起的操作不承诺收回。
+
+## 4. 验收标准（保留原 A1–A8）
+
+| 编号 | 必须证明 | 自动化证据 |
+|---|---|---|
+| A1 | B 引用 A 已 claim 名创建/激活均 403，无属主泄漏 | 双人 control 测试 |
+| A2 | A 重新引用/激活、Profile 与 Agent 调用正常 | control/e2e |
+| A3 | re-put 后下次调用拒绝；owner 409 显式确认后恢复 | fake Keyring/executor/e2e |
+| A4 | B 投毒覆盖 A 名字，A 不会静默换凭证 | 双人 fake Keyring e2e |
+| A5 | owner release / infra operator 强制 release，旧计划拒绝，新 owner 重新证明后认领 | control/executor/e2e |
+| A6 | 跨 workspace 不能借用名字，ws2 admin 无权强制释放 ws1 claim | 多 workspace 回归 |
+| A7 | **已修订**：shared 遗留 NULL pin 拒绝；候选/争议归属需证明恢复 | 迁移、恢复测试 |
+| A8 | **已修订**：事件可审计但无材质、证明、完整 MAC 或跨工作区属主信息泄漏 | 日志/Agent/审计字节扫描 |
+
+**新增定向验收：**
+
+| 编号 | 验证边界 |
+|---|---|
+| T1 | A 已 put 未 claim，B 抢先 Activate 不得获得 A 凭证/claim |
+| T2 | 同名并发 claim、证明重放/过期，只有一个合法 owner |
+| T3 | release/re-claim 的 ABA 与旧签名计划重放，executor 使用 generation 阻断 |
+| T4 | 截断 SHA 碰撞不能影响完整 MAC；HMAC 覆盖凭证全部字段、恒时比较 |
+| T5 | postgres activate/discover/execute 三条路径均执行 claim/pin 检查 |
+| T6 | 409 未确认不得自动复原；并发轮换的旧版本提交失败 |
+| T7 | 重启、失去 pin key、shared 配置缺项时 fail-closed |
+| T8 | Agent 已有委托也不能绕过 owner、generation、pin 约束 |
+
+门禁：全量 pytest/前端测试、ruff/mypy、密钥扫描、CI 六 job + Security gates，以及 FEAT-03 双凭证/Agent 组合和 FEAT-04 真 PostgreSQL matrix 保持通过。CI 使用进程内 fake Keyring，不碰真实 OS 凭据库。必须人工/自动构造 `plan 已签发 → release 提交 → executor 执行` 的确定性竞态测试。
+
+## 5. 非目标
+
+1. 不做 OpenBao/生产 SecretProvider（SECRET-06 生产腿另立项）。
+2. 不做 OS 用户/密钥环的物理隔离。
+3. 不增加 FEAT-04 多行、其他数据库引擎、任意 SQL 或通用 TCP 出口。
+4. 不用“名字混淆”替代权限控制。
+5. 不支持多 control 共享同一 OS Keyring。
+6. 本切片通过不代表 M2 人工实机或 Gate R1 企业生产通过。
+
+## 6. 原四项开放问题——正式裁决落地
+
+| 问题 | 裁决 |
+|---|---|
+| §6.1 单 control ↔ 单 executor | **同意**，为硬部署约束；namespace 显式记录 |
+| §6.2 默认不加严名字抢注 | **否决**；shared 首次 claim 必须配对证明或 infra operator 预登记 |
+| §6.3 owner re-put 再激活 | **同意并细化**：不匹配先拒，409 显式确认，版本推进 |
+| §6.4 两个新错误码 | **同意并增加轮换 409**：`KEYRING_NAME_CLAIMED`、`SECRET_FINGERPRINT_MISMATCH`、`SECRET_ROTATION_CONFIRMATION_REQUIRED` |
+
+残余风险：共享 OS 账户仍能直接读取和篡改凭证；可信 executor/control 被攻陷不在本切片保证之内；已经发出的外部操作无法撤销。
+
+**实现前需在接口契约里固定**：配对证明的本机签发/传递形式；claim 的 SQL 唯一约束与原子 CAS；executor 获取最新撤销代际的方式。允许准备契约与测试设计，但改变上述安全语义须重新审批。
+
+## 7. 获批后实施拆分
+
+1. **core**：三个错误码、签名计划 generation/version/tag 字段和权限协议。
+2. **db（迁移 9）**：机器级 claim、证明单次消费、Connection pin、遗留冲突标记、墓碑与 CAS。
+3. **executor**：本机安全配对、完整 HMAC、统一材质入口、最终撤销新鲜性检查。
+4. **control**：create/activate/plan 权限、显式轮换确认、owner release/infra operator 强制 release、审计。
+5. **测试/文档**：A1–A8 与 T1–T8、全量回归、API-SPEC、SECURITY、升级恢复操作说明。
+
+旧稿“10–14 文件、20 项测试”只是粗估；补上证明、代际撤销和安全迁移后，不应以该估算约束正确实现。
+
+**申请下一步**：技术评审复核本修订稿，明确签发实施许可。**在批准前不得合入实现代码。**
+
+## 8. 接口契约附录（实现前固定，按 §6 要求随修订稿提交）
+
+> 本附录只固定 §6 点名的三项机制与测试映射，不改变上文任何安全
+> 语义；若实现中发现需偏离，回到评审。
+
+### 8.1 配对证明：本机签发 / 传递形式（双件兑换）
+
+采用"控制面一次性码 + executor 本机attestation"两件套，两边都
+满足才算独立属主证明（普通远程 control API 单独拿不到第二件）：
+
+1. **意图件（control，用户认证后）**：`POST /api/v1/keyring-claims/
+   pairings {name}` → 创建 `keyring_claim_pairings` 行（一次性码的
+   SHA-256、绑定 principal/workspace/规范化 name、用途
+   `keyring.claim`、5 分钟过期、单次消费、尝试计数熔断——复用
+   FEAT-01 CollectorPairingRow 的全部防爆破机制）。码仅展示一次。
+2. **本机件（executor，内部令牌通道）**：CLI 新增
+   `ppswitch-secret claim-pair <name> --code <pairing-code>`，在
+   executor 同机运行：读 `PP_SWITCH_INTERNAL_TOKEN`（env，等价于
+   "真实本机操作权限"），调 `POST /internal/v1/keyring/attest
+   {name, pairing_code}`；executor 先本地确认该 name 条目可解析
+   （不读材质内容做判断依据），用仅 executor 持有的
+   `K_attest`（与 K_pin 分离）签发 HMAC attestation
+   `att = HMAC(K_attest, name || pairing_code_hash || exp_60s ||
+   nonce)`，连同 nonce/exp 返回；单码 60 秒内有效。
+3. **兑换（control activate 时原子完成）**：activate 请求携带
+   pairing_code + attestation；control 校验码（哈希、TTL、单次、
+   绑定本人/本名）→ 转发 attestation 到 executor
+   `/internal/v1/keyring/attest/verify` 验签（恒时比较）→ 通过后
+   才进入 verify 凭证 + 原子 claim 写入（§8.2）。
+   证明材料不经 argv 之外的通道明文传递；attestation 全程只在
+   control↔executor 内部信道出现，不落日志/审计（审计仅记
+   `proof_consumed_id = sha256(pairing_code)[:16]`）。
+
+个人模式（`PP_SWITCH_SHARED_KEYRING=false`，默认）：跳过 8.1 整条，
+保留 put → Activate 原体验（裁决 §6.2 允许）；claim 仍建立、
+generation/pin 机制不变。
+
+### 8.2 claim 的 SQL 唯一约束与原子 CAS
+
+- `keyring_claims`：`UNIQUE(namespace_id, name)`；`generation` 与
+  `pin_version` 均 `CHECK (> 0)`；释放/争议为状态变更 + generation
+  递增，**行永不清除**（防 ABA 复活）。
+- 首次 claim：`INSERT ... ON CONFLICT (namespace_id, name) DO
+  NOTHING`，rowcount==1 者为唯一 winner；败者读现状按状态返回
+  403/409。
+- 轮换确认：`UPDATE keyring_claims SET pin_version = pin_version + 1,
+  material_tag = :new, status = 'active' WHERE id = :id AND
+  generation = :g AND pin_version = :v AND status IN
+  ('active','pending_rotation')` —— rowcount==0 即并发败者 409。
+- 释放：`UPDATE ... SET status = 'released', generation =
+  generation + 1 WHERE id = :id AND generation = :g`；同事务把该名字
+  关联 Connections 置 `pending_claim`。
+- 网络调用（executor verify/attest）一律在事务外完成，库内仅做
+  短事务 CAS；不长时间持锁。
+
+### 8.3 executor 获取最新撤销代际的方式（执行前最终检查）
+
+- 新增反向内部查询：executor → control
+  `GET /internal/v1/keyring-claims/state?name=...&namespace_id=...`
+  （X-Internal-Token 共享令牌，生产换 workload identity）。control
+  从 DB 实时读（不缓存），返回
+  `{status, generation, pin_version}`。
+- `/internal/v1/execute` 对携带 claim 字段的 keyring 计划：验签 →
+  反向查询 → 与计划冻结的 generation/pin_version/status 比对 →
+  重算材质 HMAC（K_pin，恒时比较）→ 全部通过才执行。任一不符
+  fail-closed（503/403 族）。
+- 不做跨请求缓存（§3.1 "不能无限期缓存"）；本机回环调用延迟可
+  接受。FEAT-04 的 discover/verify 路径在 control 侧同一套 claim
+  校验（T5 覆盖）。
+
+### 8.4 A/T → 测试落点（测试设计）
+
+| 验收 | 落点 |
 | --- | --- |
-| `name` | keyring 名（PK；机器级全局唯一——部署假设：一个 control 对应一个 executor，见 §6.1） |
-| `owner_principal_id` | 首次成功激活者（FK principals） |
-| `fingerprint` | 激活时材质指纹（sha256[:8]，与 executor verify 口径一致）；`NULL`=遗留连接回填、待 owner 重新激活钉扎 |
-| `auth_scheme` | 材质声明方案（复核用） |
-| `claimed_at / updated_at` | 审计时间戳 |
+| A1/A2/T1/T6 | `apps/control-api/tests/test_keyring_claims.py`（双用户/双工作区 harness） |
+| A3/A4 | `tests/e2e/test_keyring_isolation.py`（共享 fake keyring 双人全链） |
+| A5/T3 | control 单测 + e2e（release→旧计划拒→re-claim 需新证明） |
+| A6 | 多 workspace 回归（同文件） |
+| A7 | `packages/db/tests` 迁移 9 回填 → shared 拒绝 → 显式恢复 |
+| A8 | 审计字节扫描断言（无材质/证明/完整 MAC/跨区属主） |
+| T2 | 并发 claim（线程 + CAS rowcount 断言唯一 winner）；证明重放/过期 |
+| T4 | executor 单测：截断碰撞构造 + HMAC 全字段覆盖 + 恒时比较 |
+| T5 | postgres activate/discover/execute 三路径 claim/pin 校验（PG matrix） |
+| T7 | 配置缺项/丢 K_pin/重启 fail-closed 单测 |
+| T8 | Agent 委托链上叠加 claim 约束（e2e） |
+| 竞态门禁 | `plan 已签发 → release 提交 → executor 执行` 确定性时序测试（线程护栏） |
 
-规则：
+### 8.5 配置面
 
-1. **激活时声明**：`activate_connection` 对 keyring 连接先查 claim——
-   无 claim → 以当前激活者+verify 返回的指纹写入（first-activation-
-   wins）；有 claim 且 owner≠激活者 → `KEYRING_NAME_CLAIMED`（403，
-   消息不泄露属主身份："keyring name already claimed by another
-   principal"）；有 claim 且 owner=激活者 → 校验指纹：不匹配 →
-   409 要求确认（材质已变化，见 3.2 的 fail-closed 语义）。
-2. **创建时预检**：`create_connection` 对已 claim 的名字仅允许
-   claim owner 引用（提前失败、UX 更好；激活时仍二次校验——
-   不变式在服务端两处独立成立）。
-3. **调用时复核（belt+braces）**：plan 组装对 keyring 连接重查
-   claim——owner≠连接 owner 或指纹与连接行不符 → 拒绝。claim
-   被释放/属主变更后，他人旧连接立即失效（撤销即时性，沿用
-   验收项 4 的口径）。
-4. **释放**：owner 可 `POST /keyring-claims/{name}/release`（同时
-   使该名字的所有既有连接走撤销语义）；admin 可
-   `DELETE /api/v1/keyring-claims/{name}`（动作
-   `keyring_claims.admin`，rank 2——处理离职/争议）。
-5. 权限：claim 读取 `keyring_claims.read`（member，列表仅见自己
-   的+名字摘要）；释放 owner 级；强制释放 admin 级。
+- `PP_SWITCH_SHARED_KEYRING`（control+executor 一致，默认 false）；
+  true 时缺 `namespace_id` / `K_pin` / `K_attest` / claim 数据库表
+  任一项 → 拒绝启动（T7）。
+- `K_pin`/`K_attest` 仅 executor 侧 env（`PP_SWITCH_PIN_KEY` /
+  `PP_SWITCH_ATTEST_KEY`），非 demo 缺失拒启；与内部令牌、委托
+  签名密钥互不复用。
 
-### 3.2 指纹钉扎——完整性层
+**随修订稿一并申请：复核通过即签发实施许可，按 §7 拆分动工。**
 
-1. `ConnectionRow` 增列 `secret_fingerprint`（激活时写入；executor
-   verify 已返回，落库而非丢弃）。
-2. `InvocationPlan` 增字段 `secret_fingerprint: str | None`
-   （签名计划冻结；仅 keyring 连接非空）。
-3. executor `/execute`：resolve 后**重算**材质摘要，与
-   `plan.secret_fingerprint` 不符 →
-   `SECRET_FINGERPRINT_MISMATCH`（fail-closed，503 族）。这一层
-   不依赖控制面正确性——即使 claim 检查被绕过（或旧连接漏网），
-   材质替换也无法被静默使用。
-4. 遗留语义：`NULL` 指纹（回填的旧连接）不钉扎但**仍受 claim
-   授权层约束**；owner 下次重新激活即完成钉扎。新连接一律钉扎。
-
-### 3.3 兼容与迁移
-
-- CLI **不变**：`ppswitch-secret put <name>` 照旧（属主由首次激活
-  隐式确立，人不需要知道任何 ID——这是相对"名字空间前缀"方案的
-  决定性 UX 优势）。
-- 单用户个人 Alpha：第一个激活者就是你，行为无感。
-- 迁移 9 回填：对现存 keyring 连接按名字分组取最早 owner 写
-  claim（`fingerprint=NULL`）；`secret_fingerprint` 列回填 NULL。
-- mock:// demo 连接完全不受影响。
-
-## 4. 验收标准（获批后的实施定义）
-
-| # | 验收项 | 测试形态 |
-| --- | --- | --- |
-| A1 | B 引用 A 已 claim 的名字建连接/激活 → 403 `KEYRING_NAME_CLAIMED`，且不泄露属主身份 | control 单测（双用户） |
-| A2 | A 自己重新引用、重新激活、调用 → 全通（同 owner 不受影响） | control 单测 |
-| A3 | 激活后 keyring 条目被替换 → 下一次调用 fail-closed（executor 指纹不匹配）；重新激活（owner 本人）恢复 | executor 单测（fake keyring 换材质）+ e2e |
-| A4 | 投毒方向：B 覆盖 A 的名字 → A 的调用被拒而非静默换用 B 材质 | e2e（共享 fake keyring 双用户） |
-| A5 | claim 释放/admin 强制释放后：owner 旧连接调用即拒；名字可被新用户重新 claim | control 单测 + e2e |
-| A6 | 跨工作区：ws2 用户引用 ws1 已 claim 的名字 → 拒绝（claim 机器级） | control 单测 |
-| A7 | 遗留回填：迁移后既有 keyring 连接（fingerprint=NULL）可继续调用，但他人引用被 claim 阻止 | 迁移测试 |
-| A8 | 审计：claim 建立/释放/拒绝全部落审计事件，**不含材质与指纹以外的键内容**（指纹本身非敏感） | 断言 |
-
-回归基线：全量 pytest + CI 六 job 双绿；FEAT-03 既有 keyring e2e
-（双凭证切换、Agent 组合）不回归。
-
-## 5. 不做什么（防偷渡）
-
-1. 不实现 OpenBao/生产 SecretProvider（SECRET-06 生产腿，需真实
-   基础设施与独立验收）。
-2. 不引入按用户的 OS 账户/密钥环隔离（部署形态问题）。
-3. 不动 FEAT-04 任何数据库能力；不做多行查询。
-4. 不给 keyring 名字做加密/混淆（名字本就不是秘密；属主关系在
-   服务端）。
-
-## 6. 风险与开放问题（请评审裁定）
-
-1. **部署假设**：一个 control ↔ 一个 executor ↔ 一台机器的 keyring。
-   若未来多 control 共享一个 executor，claim 表需上移或同步——
-   本提案按单控制面部署假设实现并在文档声明。
-2. **名字抢注**：恶意用户抢先激活他人**尚未存储**的名字（需先自己
-   put 一个可解析条目）造成占用。缓解：这只能占用名字、得不到他人
-   材质；被占用者可请 admin 强制释放（动作有审计）。可选加严：
-   claim 冲突时要求新激活者证明既有连接属自己（本提案默认不加严，
-   避免 UX 复杂化——请裁定）。
-3. **409 重激活语义**：owner 自己 re-put 后需重新激活一次才恢复
-   调用（fail-closed 的代价）。文档化为预期行为。
-4. 错误码新增：`KEYRING_NAME_CLAIMED`（403）、
-   `SECRET_FINGERPRINT_MISMATCH`（503）——进 errors.py 与
-   API-SPEC 对应章节。
-
-## 7. 实施拆分（获批后）
-
-1. core：错误码 ×2 + `InvocationPlan.secret_fingerprint`；
-2. db：`keyring_claims` 表 + `connections.secret_fingerprint` 列 + 迁移 9（含回填）；
-3. executor：execute 路径指纹重算比对；
-4. control：claim 服务（create/activate/invoke 三处校验）+ 释放/强制释放路由 + 权限动作 ×3 + 审计；
-5. 测试：A1–A8 + 全量回归；docs：041 交付记录 + 05-SECURITY 增补 + README。
-
-预估规模：约 10–14 个文件改动 + 1 迁移 + 20 项左右新测试，
-单切片可完成。
