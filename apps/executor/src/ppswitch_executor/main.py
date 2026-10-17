@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header
@@ -40,6 +41,15 @@ from ppswitch_executor.adapters.db_adapter import DbAdapter, discover_objects
 from ppswitch_executor.adapters.db_adapter import verify_readonly_role as verify_db_role
 from ppswitch_executor.adapters.http_adapter import HttpAdapter
 from ppswitch_executor.adapters.mock_adapter import MockAdapter
+from ppswitch_executor.claim_security import (
+    ClaimSecurity,
+    material_tag,
+    sign_attestation,
+    tags_match,
+    verify_attestation,
+    verify_claim_ticket,
+    verify_pairing_ticket,
+)
 from ppswitch_executor.network_policy import check_outbound_target
 from ppswitch_executor.plan_signing import NonceStore, verify_plan_signature
 from ppswitch_executor.response_guard import project_response
@@ -65,6 +75,32 @@ class ExecutorSettings(BaseModel):
     egress_proxy_url: str = Field(
         default_factory=lambda: os.environ.get("PP_SWITCH_EGRESS_PROXY", "")
     )
+    # SECRET-06 (docs/41): shared-keyring isolation. Personal mode (the
+    # default, single-user trust domain) derives the pin key from the
+    # internal token; shared mode REQUIRES explicit keys, the local
+    # attestation directory and the control URL (revocation freshness)
+    # and refuses to start without them.
+    shared_keyring: bool = Field(
+        default_factory=lambda: os.environ.get(
+            "PP_SWITCH_SHARED_KEYRING", "false"
+        ).lower() in ("1", "true", "yes")
+    )
+    pin_key: str = Field(
+        default_factory=lambda: os.environ.get("PP_SWITCH_PIN_KEY", "")
+    )
+    attest_key: str = Field(
+        default_factory=lambda: os.environ.get("PP_SWITCH_ATTEST_KEY", "")
+    )
+    local_attest_dir: str = Field(
+        default_factory=lambda: os.environ.get(
+            "PP_SWITCH_LOCAL_ATTEST_DIR",
+            str(Path.home() / ".ppswitch" / "attest"),
+        )
+    )
+    # used for the pre-execution claim revocation-freshness reverse query
+    control_url: str = Field(
+        default_factory=lambda: os.environ.get("PP_SWITCH_CONTROL_URL", "")
+    )
 
 
 class ExecuteRequest(BaseModel):
@@ -79,6 +115,10 @@ class SecretVerifyRequest(BaseModel):
     # APPROVED target coordinates so activation can prove a real read-only
     # connection (host/port/database from the approved db_target row)
     db_target: dict | None = None
+    # SECRET-06: mandatory claim ticket (purpose=verify) for keyring://
+    # refs - the executor never resolves keyring material on the internal
+    # token alone (docs/41 errata 3)
+    claim_ticket: str | None = None
 
 
 class DbDiscoverRequest(BaseModel):
@@ -91,6 +131,32 @@ class DbDiscoverRequest(BaseModel):
 
     secret_ref: str = Field(min_length=1, max_length=512)
     target: dict
+    # SECRET-06: claim ticket (purpose=discover) required for keyring refs
+    claim_ticket: str | None = None
+
+
+class AttestRequest(BaseModel):
+    """SECRET-06 shared-mode first-claim ownership proof request.
+
+    The one-time pairing CODE arrives from a hidden prompt via the
+    request BODY (never argv); the local nonce must be read from the
+    executor user's OS-protected attest directory.
+    """
+
+    name: str = Field(min_length=1, max_length=64)
+    pairing_code: str = Field(min_length=6, max_length=64)
+    ticket: str = Field(min_length=10)
+    local_nonce: str = Field(min_length=16, max_length=128)
+
+
+class AttestVerifyRequest(BaseModel):
+    attestation: str = Field(min_length=10)
+    namespace_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=64)
+    principal_id: str = Field(min_length=1, max_length=64)
+    workspace_id: str = Field(min_length=1, max_length=64)
+    proof_id: str = Field(min_length=1, max_length=32)
+    pairing_code_hash: str = Field(min_length=64, max_length=64)
 
 class SeedRequest(BaseModel):
     secret_ref: str = Field(min_length=1, max_length=512)
@@ -112,6 +178,15 @@ class ExecutorState:
         )
         self.mock_adapter = MockAdapter()
         self.db_adapter = DbAdapter()
+        # SECRET-06: validates the shared-mode key config (fail-closed)
+        self.claims = ClaimSecurity(
+            internal_token=self.settings.internal_token,
+            shared=self.settings.shared_keyring,
+            pin_key=self.settings.pin_key,
+            attest_key=self.settings.attest_key,
+            local_attest_dir=self.settings.local_attest_dir,
+            control_url=self.settings.control_url,
+        )
 
 
 def error_body(code: str, message: str, details: dict | None = None) -> dict:
@@ -162,14 +237,35 @@ def create_app(
     ) -> dict:
         """FEAT-03: prove a secret_ref resolves before activating a connection.
 
-        Returns ONLY resolution metadata (auth scheme + fingerprint of
-        the payload) - never material.
+        Returns ONLY resolution metadata (auth scheme + display fingerprint
+        +, for keyring refs, the full SECRET-06 material tag) - never the
+        material itself.
 
         FEAT-04: postgres credentials must additionally open the APPROVED
         target with a non-superuser role (a real read-only connection);
         anything less fails closed and the connection stays pending.
+
+        SECRET-06: keyring:// refs require a purpose=verify claim ticket;
+        the internal token alone never authorizes a material read.
         """
         require_internal_token(x_internal_token)
+        ticket_context: dict | None = None
+        if payload.secret_ref.startswith("keyring://"):
+            if not payload.claim_ticket:
+                raise ApiError(
+                    ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
+                    "Keyring verification requires a claim ticket",
+                )
+            ticket_context = verify_claim_ticket(
+                payload.claim_ticket, key=state.settings.internal_token,
+                purpose="verify",
+            )
+            _name = payload.secret_ref[len("keyring://"):]
+            if ticket_context["name"] != _name:
+                raise ApiError(
+                    ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
+                    "Claim ticket does not match the referenced keyring name",
+                )
         try:
             credential = state.provider.resolve(payload.secret_ref)
         except SecretProviderUnavailable as exc:
@@ -193,7 +289,90 @@ def create_app(
         digest = hashlib.sha256(
             _json.dumps(credential.material, sort_keys=True).encode("utf-8")
         ).hexdigest()[:8]
-        return {"ok": True, "auth_scheme": credential.auth_scheme.value, "fingerprint": digest}
+        response: dict[str, Any] = {
+            "ok": True,
+            "auth_scheme": credential.auth_scheme.value,
+            "fingerprint": digest,
+        }
+        if ticket_context is not None:
+            # full HMAC tag over the canonical material; the control plane
+            # stores it as the pin and freezes it into signed plans
+            response["material_tag"] = material_tag(
+                state.claims.pin_key,
+                namespace_id=ticket_context["namespace_id"],
+                name=ticket_context["name"],
+                auth_scheme=credential.auth_scheme.value,
+                material=credential.material,
+            )
+            response["claim"] = {
+                "generation": ticket_context["generation"],
+                "pin_version": ticket_context["pin_version"],
+            }
+        return response
+
+    @app.post("/internal/v1/keyring/attest")
+    def keyring_attest(
+        payload: AttestRequest, x_internal_token: str = Header(default="")
+    ) -> dict:
+        """SECRET-06 shared mode: sign a first-claim ownership attestation.
+
+        Requires BOTH the internal token AND a valid nonce read from the
+        OS-protected local attest directory - the generic token alone can
+        never mint an attestation (docs/41 errata 1). The pairing code
+        travels in the request body (hidden prompt on the CLI side), the
+        binding comes from the control-signed pairing ticket.
+        """
+        require_internal_token(x_internal_token)
+        if not state.claims.shared or not state.claims.attest_key:
+            raise ApiError(ErrorCode.NOT_FOUND, "No such endpoint")
+        if not state.claims.nonces.validate(payload.local_nonce):
+            raise ApiError(
+                ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
+                "Local proof invalid: run ppswitch-secret claim-pair on the "
+                "executor machine (reads the protected local nonce)",
+            )
+        binding = verify_pairing_ticket(
+            payload.ticket, key=state.settings.internal_token
+        )
+        if binding["name"] != payload.name.lower():
+            raise ApiError(
+                ErrorCode.KEYRING_CLAIM_PROOF_INVALID, "Ticket does not match the name"
+            )
+        import hashlib
+
+        code_hash = hashlib.sha256(payload.pairing_code.encode("utf-8")).hexdigest()
+        attestation = sign_attestation(
+            state.claims.attest_key,
+            namespace_id=binding["namespace_id"],
+            name=binding["name"],
+            principal_id=binding["principal_id"],
+            workspace_id=binding["workspace_id"],
+            proof_id=binding["proof_id"],
+            pairing_code_hash=code_hash,
+        )
+        return {"attestation": attestation, "purpose": "keyring.claim"}
+
+    @app.post("/internal/v1/keyring/attest/verify")
+    def keyring_attest_verify(
+        payload: AttestVerifyRequest, x_internal_token: str = Header(default="")
+    ) -> dict:
+        """Control-side redemption check: constant-time verify the full
+        attestation binding (namespace/name/principal/workspace/proof/
+        code-hash/purpose/expiry)."""
+        require_internal_token(x_internal_token)
+        if not state.claims.attest_key:
+            raise ApiError(ErrorCode.NOT_FOUND, "No such endpoint")
+        verify_attestation(
+            state.claims.attest_key,
+            payload.attestation,
+            namespace_id=payload.namespace_id,
+            name=payload.name,
+            principal_id=payload.principal_id,
+            workspace_id=payload.workspace_id,
+            proof_id=payload.proof_id,
+            pairing_code_hash=payload.pairing_code_hash,
+        )
+        return {"ok": True}
 
     @app.post("/internal/v1/db/discover")
     def db_discover(
@@ -204,8 +383,28 @@ def create_app(
         Trusted-side only: the schemas listed in the (control-approved)
         target gate the information_schema query, the read-only role gates
         visibility, and only column names/types leave this endpoint.
+
+        SECRET-06: keyring refs additionally require a purpose=discover
+        claim ticket; the internal token alone never authorizes a
+        material read (docs/41 errata 3).
         """
         require_internal_token(x_internal_token)
+        if payload.secret_ref.startswith("keyring://"):
+            if not payload.claim_ticket:
+                raise ApiError(
+                    ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
+                    "Keyring discovery requires a claim ticket",
+                )
+            ticket = verify_claim_ticket(
+                payload.claim_ticket, key=state.settings.internal_token,
+                purpose="discover",
+            )
+            if ticket["name"] != payload.secret_ref[len("keyring://"):]:
+                raise ApiError(
+                    ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
+                    "Claim ticket does not match the referenced keyring name",
+                )
+            _require_fresh_claim(state, ticket)
         try:
             credential = state.provider.resolve(payload.secret_ref)
         except SecretProviderUnavailable as exc:
@@ -251,15 +450,52 @@ def create_app(
                 "Mock credential refs are rejected outside demo mode",
             )
 
+        # SECRET-06 (docs/41 section 3.1): the executor's FINAL check for
+        # keyring material - a valid claim context in the signed plan, a
+        # fresh revocation state, and a full material-tag match computed
+        # over the just-resolved credential. Fail-closed on any gap.
+        if plan.secret_ref.startswith("keyring://"):
+            if plan.claim is None:
+                raise ApiError(
+                    ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
+                    "Keyring credentials require a claim context in the plan",
+                )
+            _require_fresh_claim(
+                state,
+                {
+                    "namespace_id": plan.claim.namespace_id,
+                    "name": plan.claim.name,
+                    "generation": plan.claim.generation,
+                    "pin_version": plan.claim.pin_version,
+                },
+            )
+
+        try:
+            credential = state.provider.resolve(plan.secret_ref)
+        except SecretProviderUnavailable as exc:
+            # fail closed: no .env fallback, ever (SEC-013)
+            raise ApiError(ErrorCode.SECRET_PROVIDER_UNAVAILABLE, str(exc)) from exc
+
+        if plan.claim is not None:
+            actual_tag = material_tag(
+                state.claims.pin_key,
+                namespace_id=plan.claim.namespace_id,
+                name=plan.claim.name,
+                auth_scheme=credential.auth_scheme.value,
+                material=credential.material,
+            )
+            if not tags_match(plan.claim.material_tag, actual_tag):
+                raise ApiError(
+                    ErrorCode.SECRET_FINGERPRINT_MISMATCH,
+                    "Credential material changed after activation; re-activate to "
+                    "confirm the rotation",
+                )
+
         # FEAT-04: database plans run through the dedicated read-only
         # adapter; the HTTP endpoint/mock selection below never applies.
         # The signed plan froze the APPROVED target coordinates; the
         # adapter re-checks the schema allowlist and its own policy layer.
         if plan.db_query is not None:
-            try:
-                credential = state.provider.resolve(plan.secret_ref)
-            except SecretProviderUnavailable as exc:
-                raise ApiError(ErrorCode.SECRET_PROVIDER_UNAVAILABLE, str(exc)) from exc
             raw = state.db_adapter.execute(plan, credential)
             guarded = project_response(
                 raw, plan.allow_fields, output_schema=plan.output_schema
@@ -298,12 +534,6 @@ def create_app(
                 del check
             adapter = state.http_adapter  # type: ignore[assignment]
 
-        try:
-            credential = state.provider.resolve(plan.secret_ref)
-        except SecretProviderUnavailable as exc:
-            # fail closed: no .env fallback, ever (SEC-013)
-            raise ApiError(ErrorCode.SECRET_PROVIDER_UNAVAILABLE, str(exc)) from exc
-
         raw = adapter.execute(plan, credential)
         guarded = project_response(
             raw, plan.allow_fields, output_schema=plan.output_schema
@@ -341,6 +571,52 @@ def create_app(
         )
 
     return app
+
+
+def _require_fresh_claim(state: ExecutorState, claim: dict) -> None:
+    """SECRET-06 revocation freshness: compare the plan/ticket's frozen
+    claim generation against the control plane's LIVE state.
+
+    Runs whenever a control URL is configured (always in shared mode -
+    startup refuses without it). No cross-request caching: every material
+    read re-queries (docs/41 section 8.3).
+    """
+    if not state.claims.control_url:
+        return  # personal mode without control wiring; generation checks
+        # still happen control-side at plan build
+    import httpx
+
+    url = (
+        f"{state.claims.control_url}/internal/v1/keyring-claims/state"
+        f"?namespace_id={claim['namespace_id']}&name={claim['name']}"
+    )
+    try:
+        response = httpx.get(
+            url,
+            headers={"X-Internal-Token": state.settings.internal_token},
+            timeout=5.0,
+            trust_env=False,
+        )
+    except httpx.HTTPError as exc:
+        raise ApiError(
+            ErrorCode.SECRET_PROVIDER_UNAVAILABLE,
+            "Claim revocation state unavailable",
+        ) from exc
+    if response.status_code != 200:
+        raise ApiError(
+            ErrorCode.SECRET_PROVIDER_UNAVAILABLE,
+            "Claim revocation state unavailable",
+        )
+    live = response.json()
+    if (
+        live.get("status") != "active"
+        or live.get("generation") != claim["generation"]
+        or live.get("pin_version") != claim["pin_version"]
+    ):
+        raise ApiError(
+            ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
+            "Claim state changed (released, disputed or rotated); refusing",
+        )
 
 
 def _join_url(base_url: str, path_template: str) -> str:

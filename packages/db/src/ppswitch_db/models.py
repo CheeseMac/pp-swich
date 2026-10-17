@@ -327,6 +327,11 @@ class ConnectionRow(Base):
             "auth_scheme IN ('none','api_key','bearer','oauth2','basic','postgres')",
             "auth_scheme",
         ),
+        # SECRET-06: pin lifecycle of the credential material this
+        # connection uses (keyring refs only; mock refs stay 'unpinned')
+        CheckConstraint(
+            "pin_state IN ('unpinned','pending_rotation','pinned')", "pin_state"
+        ),
         ForeignKeyConstraint(
             ["service_id", "workspace_id"], ["services.id", "services.workspace_id"]
         ),
@@ -341,9 +346,101 @@ class ConnectionRow(Base):
     secret_ref: Mapped[str] = mapped_column(String(512), nullable=False)
     scopes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(16), default="pending")
+    # SECRET-06 (docs/41): the claim generation / pin version / material
+    # tag captured at activation; NULLs mean un-pinned (legacy or not yet
+    # claimed) - un-pinned keyring connections cannot execute
+    claim_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    pin_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    secret_material_tag: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    pin_state: Mapped[str] = mapped_column(String(24), nullable=False, default="unpinned")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class KeyringClaimRow(Base):
+    """SECRET-06: machine-level ownership claim over one keyring name.
+
+    One row per (namespace_id, name) per executor machine; the row is
+    NEVER deleted - release/dispute are status transitions that bump
+    ``generation`` so signed plans frozen at an older generation can never
+    be replayed after a release/re-claim cycle (anti-ABA, docs/41 8.2).
+    ``material_tag`` is the full executor-held HMAC of the pinned
+    credential material (credential-derived data: never logged or exposed
+    through APIs).
+    """
+
+    __tablename__ = "keyring_claims"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active','pending_rotation','released','disputed','pending_claim')",
+            "status",
+        ),
+        CheckConstraint("generation > 0", "generation_positive"),
+        CheckConstraint("pin_version > 0", "pin_version_positive"),
+        CheckConstraint(
+            "material_tag IS NULL OR length(material_tag) = 64", "material_tag_len"
+        ),
+        UniqueConstraint("namespace_id", "name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    namespace_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    owner_principal_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_workspace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    auth_scheme: Mapped[str] = mapped_column(String(16), nullable=False, default="api_key")
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    pin_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    material_tag: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending_claim")
+    # irreversible id of the consumed ownership proof (random, not a
+    # hash of the guessable pairing code - docs/41 errata 1)
+    proof_consumed_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class KeyringClaimPairingRow(Base):
+    """SECRET-06: one-time console pairing for a shared-mode first claim.
+
+    Mirrors the FEAT-01 collector pairing defenses: the one-time code is
+    stored hashed, single-use, short-lived and brute-force capped. The
+    row binds (principal, workspace, namespace, canonical name, purpose
+    'keyring.claim') and carries the signed binding ticket the CLI hands
+    to the executor's local attestation channel. ``proof_id`` is the
+    random, non-secret id recorded in audits (never the code hash).
+    """
+
+    __tablename__ = "keyring_claim_pairings"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','consumed','expired')", "status"
+        ),
+        ForeignKeyConstraint(
+            ["workspace_id"], ["workspaces.id"],
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    principal_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    namespace_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    proof_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    ticket: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ProfileRow(Base):

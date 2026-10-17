@@ -152,7 +152,8 @@ uv run python scripts/seed-demo.py
 | **交接文档（FEAT-04 会话入口）** | **[38-HANDOVER-FEAT04](docs/38-HANDOVER-FEAT04.md)** |
 | **FEAT-04 只读 PostgreSQL 发现交付记录** | **[39-FEAT04-DB-DISCOVERY](docs/39-FEAT04-DB-DISCOVERY.md)** |
 | **Alpha 快速上手与实机验收剧本** | **[40-ALPHA-QUICKSTART](docs/40-ALPHA-QUICKSTART.md)** |
-| **SECRET-06 前置项设计提案（修订稿+接口契约，待复核签发）** | **[41-PROPOSAL-SECRET-06-KEYRING-ISOLATION](docs/41-PROPOSAL-SECRET-06-KEYRING-ISOLATION.md)** |
+| **SECRET-06 Keyring 隔离设计（已批复实施，含勘误修订）** | **[41-PROPOSAL-SECRET-06-KEYRING-ISOLATION](docs/41-PROPOSAL-SECRET-06-KEYRING-ISOLATION.md)** |
+| **SECRET-06 交付记录（claim+配对证明+全长 MAC 钉扎+代际撤销）** | **[42-SECRET-06-DELIVERY](docs/42-SECRET-06-DELIVERY.md)** |
 
 **优先阅读顺序**：00 → 01 → 02 → 04 → 05 → **18** → 06 → 07 → 08 → 09 → 19。网页采集开发前加读 03；UI 开发前加读 12。
 

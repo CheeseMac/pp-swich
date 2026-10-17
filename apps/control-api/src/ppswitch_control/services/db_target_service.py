@@ -239,6 +239,18 @@ def discover_db_metadata(
         principal_id=principal_id,
         service_id=target.service_id,
     )
+    # SECRET-06: discovery resolves keyring material too - it freezes the
+    # same claim context and presents a purpose=discover ticket
+    from ppswitch_control.services.keyring_claim_service import (
+        resolve_claim_context,
+        sign_discover_ticket,
+    )
+
+    claim_context = resolve_claim_context(
+        session, settings=settings, connection=connection
+    )
+    assert claim_context is not None  # caller_postgres_connection is keyring-backed
+    discover_ticket = sign_discover_ticket(settings=settings, claim=claim_context)
     try:
         response = executor_client.post(
             f"{settings.executor_url}/internal/v1/db/discover",
@@ -250,6 +262,7 @@ def discover_db_metadata(
                     "database": target.database,
                     "allowed_schemas": target.allowed_schemas or [],
                 },
+                "claim_ticket": discover_ticket,
             },
             headers={"X-Internal-Token": settings.internal_token},
         )

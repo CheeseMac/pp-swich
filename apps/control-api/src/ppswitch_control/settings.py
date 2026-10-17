@@ -75,6 +75,15 @@ class ControlSettings(BaseModel):
         os.environ.get("PP_SWITCH_COLLECTOR_MAX_OBSERVATIONS", "200")
     )
 
+    # SECRET-06 (docs/41): shared-keyring isolation. Personal mode (the
+    # default) keeps the FEAT-03 first-activation experience; shared mode
+    # requires an explicit namespace id (claims are machine-global) and
+    # the executor side demands its own keys (fail-closed there).
+    shared_keyring: bool = os.environ.get(
+        "PP_SWITCH_SHARED_KEYRING", "false"
+    ).lower() in ("1", "true", "yes")
+    namespace_id: str = os.environ.get("PP_SWITCH_NAMESPACE_ID", "local")
+
     @property
     def effective_delegation_key(self) -> str:
         return self.delegation_signing_key or self.internal_token

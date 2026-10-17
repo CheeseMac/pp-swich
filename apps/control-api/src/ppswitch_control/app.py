@@ -8,6 +8,7 @@ import httpx
 from fastapi import FastAPI
 from ppswitch_db.session import create_engine_for_url, create_session_factory
 
+from ppswitch_control.api.v1.router import internal_router as v1_internal_router
 from ppswitch_control.api.v1.router import router as v1_router
 from ppswitch_control.envelope import RequestIdMiddleware, install_error_handlers
 from ppswitch_control.settings import ControlSettings
@@ -130,4 +131,5 @@ def create_app(
         return {"status": "ready"}
 
     app.include_router(v1_router)
+    app.include_router(v1_internal_router)
     return app

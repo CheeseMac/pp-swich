@@ -158,6 +158,16 @@ def test_operation(
             "Test calls require an approved endpoint and an active connection",
         )
 
+    # SECRET-06: the test path freezes the same claim context a real
+    # invocation would (un-pinned keyring credentials never test-execute)
+    from ppswitch_control.services.keyring_claim_service import (
+        resolve_claim_context,
+    )
+
+    claim_context = resolve_claim_context(
+        session, settings=settings, connection=connection
+    )
+
     if is_db_operation:
         return _test_db_operation(
             session,
@@ -170,6 +180,7 @@ def test_operation(
             db_execution=db_execution,
             settings=settings,
             executor_client=executor_client,
+            claim_context=claim_context,
         )
     if endpoint is None or endpoint.status != "approved":
         raise ApiError(
@@ -229,6 +240,7 @@ def test_operation(
         idempotency_key=None,
         deadline_epoch_s=time.time() + PLAN_DEADLINE_S,
         nonce=uuid_module.uuid4().hex + uuid_module.uuid4().hex[:8],
+        claim=claim_context,
     )
     plan_payload = json.loads(plan.model_dump_json())
 
@@ -302,6 +314,7 @@ def _test_db_operation(
     db_execution: dict | None,
     settings,
     executor_client: httpx.Client,
+    claim_context=None,
 ) -> dict:
     """FEAT-04: live test of a discovered db operation.
 
@@ -407,6 +420,7 @@ def _test_db_operation(
         deadline_epoch_s=time.time() + PLAN_DEADLINE_S,
         nonce=uuid_module.uuid4().hex + uuid_module.uuid4().hex[:8],
         db_query=db_query,
+        claim=claim_context,
     )
     plan_payload = json.loads(plan.model_dump_json())
 

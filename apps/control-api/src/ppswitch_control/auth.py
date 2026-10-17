@@ -112,6 +112,12 @@ ACTION_MIN_ROLE: dict[str, int] = {
                               # is a reviewer-grade action, not member-grade
     # FEAT-04: database targets are a SEPARATE approval type; same grades
     # as their HTTP counterparts
+    # SECRET-06: keyring name claims (release authorization is refined
+    # per-claim inside the service: owner or the claim's own workspace
+    # admin - never a foreign-workspace admin)
+    "keyring_claims.read": 0,
+    "keyring_claims.pair": 0,
+    "keyring_claims.release": 0,
     "dbtargets.read": 0,
     "dbtargets.write": 0,
     "dbtargets.approve": 1,

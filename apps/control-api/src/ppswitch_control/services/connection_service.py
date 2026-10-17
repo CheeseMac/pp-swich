@@ -58,8 +58,21 @@ def create_connection(
         if not _KEYRING_NAME.match(secret_name):
             raise ApiError(
                 ErrorCode.BAD_REQUEST,
-                "secret_name must match [a-z0-9][a-z0-9/_-]{2,63}",
+                "secret_name must match [a-z0-9][a-z0-9/_-]{2,63]",
             )
+        # SECRET-06: referencing a name claimed by another principal is
+        # refused at create time already (activation re-checks - the
+        # invariant holds independently in both places)
+        from ppswitch_control.services.keyring_claim_service import (
+            assert_name_referenceable_by,
+        )
+
+        assert_name_referenceable_by(
+            session,
+            namespace_id=settings.namespace_id,
+            name=secret_name,
+            principal_id=principal_id,
+        )
         connection.secret_ref = f"keyring://{secret_name}"
         connection.status = "pending"
     elif settings.demo_mode:
@@ -339,16 +352,25 @@ def activate_connection(
     connection_id: UUID,
     settings,
     executor_client,
+    pairing_code: str | None = None,
+    attestation: str | None = None,
 ) -> ConnectionRow:
     """FEAT-03: activate a pending keyring connection.
 
     Asks the trusted executor to RESOLVE the secret_ref (it returns only
-    a fingerprint, never material). Fail-closed: nothing activates while
-    the store is unreachable or the secret is missing.
+    a display fingerprint and the SECRET-06 material tag, never material).
+    Fail-closed: nothing activates while the store is unreachable or the
+    secret is missing.
 
     FEAT-04: postgres connections additionally prove a REAL read-only
     connection - the executor opens the service's approved database target
     with the keyring credential and refuses superuser-class roles.
+
+    SECRET-06: the activation also establishes/checks the name claim and
+    pins the material tag (docs/41). Shared mode demands the two-part
+    ownership proof (pairing code + executor-local attestation); a
+    changed material starts the 409 rotation-confirm state machine
+    instead of silently re-pinning.
     """
     connection = session.get(ConnectionRow, connection_id)
     if (
@@ -359,12 +381,18 @@ def activate_connection(
         or connection.owner_principal_id != principal_id
     ):
         raise ApiError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found")
-    if connection.status != "pending":
+    if connection.status == "revoked":
+        raise ApiError(ErrorCode.CONFLICT, "Connection already revoked")
+    if connection.status != "pending" and not (
+        connection.status == "active"
+        and connection.secret_ref.startswith("keyring://")
+    ):
+        # SECRET-06: an ACTIVE keyring connection MAY re-activate - a
+        # matching material just refreshes the pin, a changed material
+        # starts the 409 rotation-confirm flow (docs/41 section 3.2)
         raise ApiError(ErrorCode.CONFLICT, f"Connection already {connection.status}")
-    verify_payload: dict = {
-        "secret_ref": connection.secret_ref,
-        "auth_scheme": connection.auth_scheme,
-    }
+
+    db_target: dict | None = None
     if connection.auth_scheme == AuthScheme.POSTGRES.value:
         from ppswitch_db.models import DatabaseTargetRow
 
@@ -381,15 +409,87 @@ def activate_connection(
                 "Activate a postgres connection only after the service's "
                 "database target is approved",
             )
-        verify_payload["db_target"] = {
-            "host": target.host,
-            "port": target.port,
-            "database": target.database,
-        }
+        db_target = {"host": target.host, "port": target.port, "database": target.database}
+
+    if not connection.secret_ref.startswith("keyring://"):
+        # demo mock refs: unchanged FEAT-03 path, no claim machinery
+        body = _plain_verify(
+            settings, executor_client, connection.secret_ref,
+            connection.auth_scheme, db_target,
+        )
+        connection.status = "active"
+        _audit_activate(session, workspace_id, principal_id, connection_id, body)
+        return connection
+
+    from ppswitch_control.services.keyring_claim_service import (
+        acquire_or_check_claim,
+        commit_claim,
+        detect_rotation,
+        executor_verify_with_ticket,
+        mark_rotation_pending,
+    )
+
+    claim, bundle = acquire_or_check_claim(
+        session,
+        settings=settings,
+        executor_client=executor_client,
+        workspace_id=workspace_id,
+        principal_id=principal_id,
+        connection=connection,
+        pairing_code=pairing_code,
+        attestation=attestation,
+    )
+    body = executor_verify_with_ticket(
+        settings=settings,
+        executor_client=executor_client,
+        connection=connection,
+        bundle=bundle,
+        db_target=db_target,
+    )
+    material_tag = body["material_tag"]
+    if claim is not None and claim.status in ("active", "pending_rotation"):
+        if detect_rotation(claim, material_tag):
+            # material changed under a live pin: explicit confirmation only
+            mark_rotation_pending(
+                session, claim, bundle.name, workspace_id, principal_id
+            )
+            session.commit()
+            raise ApiError(
+                ErrorCode.SECRET_ROTATION_CONFIRM_REQUIRED,
+                "Credential material changed since the last activation; "
+                "confirm the rotation to re-pin (docs/41 section 3.2)",
+            )
+        connection.status = "active"
+        from ppswitch_control.services.keyring_claim_service import _pin_connection
+
+        _pin_connection(session, connection, claim, material_tag)
+        _audit_activate(session, workspace_id, principal_id, connection_id, body)
+        return connection
+
+    commit_claim(
+        session,
+        workspace_id=workspace_id,
+        principal_id=principal_id,
+        connection=connection,
+        claim=claim,
+        bundle=bundle,
+        material_tag=material_tag,
+        auth_scheme=connection.auth_scheme,
+    )
+    connection.status = "active"
+    _audit_activate(session, workspace_id, principal_id, connection_id, body)
+    return connection
+
+
+def _plain_verify(settings, executor_client, secret_ref: str, auth_scheme: str,
+                  db_target: dict | None) -> dict:
+    payload: dict = {"secret_ref": secret_ref, "auth_scheme": auth_scheme}
+    if db_target is not None:
+        payload["db_target"] = db_target
     try:
         response = executor_client.post(
             f"{settings.executor_url}/internal/v1/secrets/verify",
-            json=verify_payload,
+            json=payload,
             headers={"X-Internal-Token": settings.internal_token},
         )
     except httpx.HTTPError as exc:
@@ -401,7 +501,10 @@ def activate_connection(
             "Secret store did not resolve this connection's secret_ref",
             {"detail": body.get("detail") or body.get("reason") or "unavailable"},
         )
-    connection.status = "active"
+    return body
+
+
+def _audit_activate(session, workspace_id, principal_id, connection_id, body) -> None:
     session.add(
         AuditEventRow(
             workspace_id=workspace_id,
@@ -411,10 +514,11 @@ def activate_connection(
             redacted_metadata={
                 "connection_id": str(connection_id),
                 "fingerprint": body.get("fingerprint"),
+                # the full material tag is credential-derived data and is
+                # deliberately NOT audited (docs/41 section 3.4)
             },
         )
     )
-    return connection
 
 
 def revoke_connection(

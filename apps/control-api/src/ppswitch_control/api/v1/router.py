@@ -14,7 +14,7 @@ from pathlib import Path
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Request, UploadFile
 from ppswitch_core.errors import ApiError, ErrorCode
 from ppswitch_db.models import (
     ActiveBindingRow,
@@ -83,6 +83,37 @@ from ppswitch_control.services.invocation_service import invoke_capability
 from ppswitch_control.services.operation_test_service import test_operation
 
 router = APIRouter(prefix="/api/v1")
+
+# SECRET-06: internal channel for the executor's pre-execution revocation
+# freshness check - internal-token authenticated, never a principal route
+internal_router = APIRouter(prefix="/internal/v1")
+
+
+@internal_router.get("/keyring-claims/state")
+def keyring_claim_state(
+    namespace_id: str,
+    name: str,
+    request: Request,
+    x_internal_token: str = Header(default=""),
+):
+    from ppswitch_db.models import KeyringClaimRow
+
+    if x_internal_token != request.app.state.settings.internal_token:
+        raise ApiError(ErrorCode.UNAUTHENTICATED, "Internal token missing or invalid")
+    session: Session = request.app.state.session_factory()
+    try:
+        row = session.scalars(
+            select(KeyringClaimRow).where(
+                KeyringClaimRow.namespace_id == namespace_id,
+                KeyringClaimRow.name == name,
+            )
+        ).one_or_none()
+    finally:
+        session.close()
+    if row is None:
+        raise ApiError(ErrorCode.NOT_FOUND, "No claim under that name")
+    return {"status": row.status, "generation": row.generation,
+            "pin_version": row.pin_version}
 
 
 def _safe_yaml_load(content: bytes) -> dict:
@@ -241,6 +272,21 @@ class DelegationCreate(BaseModel):
     agent_principal_id: UUID
     scopes: list[str] = Field(default_factory=list)
     expires_at: str | None = None  # ISO-8601; None = no expiry
+
+
+class ConnectionActivateRequest(BaseModel):
+    """SECRET-06: shared-mode first claims carry the one-time pairing
+    code (from the hidden prompt - never a command line) and the
+    executor-local attestation obtained via `ppswitch-secret claim-pair`.
+    """
+
+    pairing_code: str | None = Field(default=None, min_length=6, max_length=64)
+    attestation: str | None = Field(default=None, min_length=10)
+
+
+class ClaimPairingCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=64,
+                      pattern=r"^[a-z0-9][a-z0-9/_-]{2,63}$")
 
 
 class OperationTestRequest(BaseModel):
@@ -1160,10 +1206,15 @@ def create_connection_route(
 def activate_connection_route(
     connection_id: UUID,
     request: Request,
+    payload: ConnectionActivateRequest | None = None,
     auth: AuthContext = Depends(require_permission("connections.write")),
     session: Session = Depends(get_session),
 ):
-    """FEAT-03: prove the keyring secret resolves, then activate."""
+    """FEAT-03: prove the keyring secret resolves, then activate.
+
+    SECRET-06: in shared mode the body carries the pairing code + local
+    attestation for a first claim / re-claim (docs/41 section 8.1).
+    """
     settings = request.app.state.settings
     executor_client: httpx.Client = request.app.state.executor_client
     connection = activate_connection(
@@ -1173,6 +1224,8 @@ def activate_connection_route(
         connection_id=connection_id,
         settings=settings,
         executor_client=executor_client,
+        pairing_code=payload.pairing_code if payload else None,
+        attestation=payload.attestation if payload else None,
     )
     return ok(request, {"id": str(connection.id), "status": connection.status})
 
@@ -1191,6 +1244,144 @@ def revoke_connection_route(
         connection_id=connection_id,
     )
     return ok(request, {"id": str(connection.id), "status": connection.status})
+
+
+@router.post("/connections/{connection_id}/confirm-rotation")
+def confirm_rotation_route(
+    connection_id: UUID,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("connections.write")),
+    session: Session = Depends(get_session),
+):
+    """SECRET-06: the owner's explicit resolution of a 409 rotation -
+    re-verifies under a reservation and CAS-pins the new material tag."""
+    settings = request.app.state.settings
+    executor_client: httpx.Client = request.app.state.executor_client
+    from ppswitch_control.services.keyring_claim_service import confirm_rotation
+
+    connection = session.get(ConnectionRow, connection_id)
+    if (
+        connection is None
+        or connection.workspace_id != auth.workspace_id
+        or connection.owner_principal_id != auth.principal_id
+    ):
+        raise ApiError(ErrorCode.CONNECTION_NOT_FOUND, "Connection not found")
+    confirm_rotation(
+        session,
+        settings=settings,
+        executor_client=executor_client,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        connection=connection,
+    )
+    return ok(request, {"id": str(connection.id), "status": connection.status})
+
+
+# ---------------------------------------------------------------------------
+# SECRET-06: keyring name claims (docs/41)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/keyring-claims/pairings")
+def create_claim_pairing_route(
+    payload: ClaimPairingCreate,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("keyring_claims.pair")),
+    session: Session = Depends(get_session),
+):
+    """Shared mode: mint the one-time pairing (code + binding ticket).
+
+    The code is shown ONCE in this response only; pair it on the executor
+    machine with `ppswitch-secret claim-pair` (hidden prompt + protected
+    local nonce - docs/41 errata 1).
+    """
+    settings = request.app.state.settings
+    from ppswitch_control.services.keyring_claim_service import create_pairing
+
+    pairing, one_time_code = create_pairing(
+        session,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        namespace_id=settings.namespace_id,
+        name=payload.name,
+        internal_token=settings.internal_token,
+        shared_mode=settings.shared_keyring,
+    )
+    return ok(
+        request,
+        {
+            "id": str(pairing.id),
+            "name": pairing.name,
+            "proof_id": pairing.proof_id,
+            "ticket": pairing.ticket,
+            "pairing_code": one_time_code,
+            "expires_at": pairing.expires_at.isoformat(),
+        },
+        201,
+    )
+
+
+@router.get("/keyring-claims")
+def list_claims_route(
+    request: Request,
+    auth: AuthContext = Depends(require_permission("keyring_claims.read")),
+    session: Session = Depends(get_session),
+):
+    """Your claims (workspace admins see their workspace's claims)."""
+    settings = request.app.state.settings
+    from ppswitch_db.models import KeyringClaimRow
+
+    stmt = select(KeyringClaimRow).where(
+        KeyringClaimRow.namespace_id == settings.namespace_id
+    )
+    if _is_admin(auth):
+        stmt = stmt.where(KeyringClaimRow.owner_workspace_id == auth.workspace_id)
+    else:
+        stmt = stmt.where(KeyringClaimRow.owner_principal_id == auth.principal_id)
+    rows = session.scalars(stmt.order_by(KeyringClaimRow.name)).all()
+    return ok(
+        request,
+        [
+            {
+                "name": row.name,
+                "status": row.status,
+                "generation": row.generation,
+                "pin_version": row.pin_version,
+                "auth_scheme": row.auth_scheme,
+                "claimed_at": row.claimed_at.isoformat() if row.claimed_at else None,
+            }
+            for row in rows
+        ],
+    )
+
+
+@router.post("/keyring-claims/{name}/release")
+def release_claim_route(
+    name: str,
+    request: Request,
+    auth: AuthContext = Depends(require_permission("keyring_claims.release")),
+    session: Session = Depends(get_session),
+):
+    """Release a claim: owner, or an admin of the claim's OWN workspace.
+
+    A foreign-workspace admin gets 403 without learning the owner
+    (docs/41 errata: no cross-workspace force release).
+    """
+    settings = request.app.state.settings
+    from ppswitch_control.services.keyring_claim_service import release_claim
+
+    claim = release_claim(
+        session,
+        namespace_id=settings.namespace_id,
+        name=name,
+        workspace_id=auth.workspace_id,
+        principal_id=auth.principal_id,
+        is_workspace_admin=_is_admin(auth),
+    )
+    return ok(
+        request, {"name": claim.name, "status": claim.status,
+                  "generation": claim.generation}
+    )
 
 
 @router.get("/connections")

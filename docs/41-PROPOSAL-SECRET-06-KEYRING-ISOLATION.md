@@ -1,6 +1,6 @@
 # 41 · SECRET-06 共享 Keyring 多用户隔离——审批修订稿
 
-> **状态：修订待复核；实施尚未获批。** 本版取代 `7404fbe` 原稿（按 2026-10-16 设计审批四项裁决修订），落库于 `ff40ba9` 之后。§0–§7 为修订正文；**§8 为开发侧按 §6 要求提交的接口契约附录**（仅固定实现机制，不改变 §0–§7 安全语义）。继承此前所有已关闭 FEAT 的正式批复，不重审历史问题。
+> **状态：已批复实施（2026-10-17，三项勘误为约束条件）；§8 已按勘误修订。** 本版取代 `7404fbe` 原稿（按 2026-10-16 设计审批四项裁决修订），落库于 `ff40ba9` 之后。§0–§7 为修订正文；**§8 为开发侧按 §6 要求提交的接口契约附录**（仅固定实现机制，不改变 §0–§7 安全语义）。继承此前所有已关闭 FEAT 的正式批复，不重审历史问题。
 >
 > 本文保留原 §0–§7、G1–G4、A1–A8，新增补充验收 T1–T8。仅针对单 control、单 executor、单共享 OS Keyring 命名空间的部署。
 
@@ -185,23 +185,25 @@ verify 将完整标签通过受保护内部协议供 control 存储；签名计�
    SHA-256、绑定 principal/workspace/规范化 name、用途
    `keyring.claim`、5 分钟过期、单次消费、尝试计数熔断——复用
    FEAT-01 CollectorPairingRow 的全部防爆破机制）。码仅展示一次。
-2. **本机件（executor，内部令牌通道）**：CLI 新增
-   `ppswitch-secret claim-pair <name> --code <pairing-code>`，在
-   executor 同机运行：读 `PP_SWITCH_INTERNAL_TOKEN`（env，等价于
-   "真实本机操作权限"），调 `POST /internal/v1/keyring/attest
-   {name, pairing_code}`；executor 先本地确认该 name 条目可解析
-   （不读材质内容做判断依据），用仅 executor 持有的
-   `K_attest`（与 K_pin 分离）签发 HMAC attestation
-   `att = HMAC(K_attest, name || pairing_code_hash || exp_60s ||
-   nonce)`，连同 nonce/exp 返回；单码 60 秒内有效。
+2. **本机件（executor，受 OS 权限保护的本地 IPC）**【勘误 1 修订】：
+   CLI `ppswitch-secret claim-pair <name> --ticket <b64>` 在
+   executor 同机运行。一次性码经**隐藏输入**（getpass）读入、随
+   **请求体**提交——绝不进 argv/URL/日志；ticket 非秘密可经参数。
+   本机证明 = executor 启动时在 **0700 目录**写入并轮换的
+   `local.nonce`（0600）——CLI 必须读到该文件内容才能换取
+   attestation；**仅凭通用 `PP_SWITCH_INTERNAL_TOKEN` 永远拿不到
+   attestation**（attest 端点同时校验两者）。attestation =
+   `HMAC(K_attest, canonical(namespace_id || name || principal_id ||
+   workspace_id || proof_id || sha256(code) || purpose || exp))`，
+   5 分钟、单次；K_attest 与 K_pin 分离。
 3. **兑换（control activate 时原子完成）**：activate 请求携带
    pairing_code + attestation；control 校验码（哈希、TTL、单次、
    绑定本人/本名）→ 转发 attestation 到 executor
    `/internal/v1/keyring/attest/verify` 验签（恒时比较）→ 通过后
    才进入 verify 凭证 + 原子 claim 写入（§8.2）。
-   证明材料不经 argv 之外的通道明文传递；attestation 全程只在
-   control↔executor 内部信道出现，不落日志/审计（审计仅记
-   `proof_consumed_id = sha256(pairing_code)[:16]`）。
+   attestation 全程只在 control↔executor 内部信道出现，不落
+   日志/审计；**审计仅记 pairing 创建时生成的随机 proof_id**，
+   不记配对码哈希（防离线猜测，勘误 1）。
 
 个人模式（`PP_SWITCH_SHARED_KEYRING=false`，默认）：跳过 8.1 整条，
 保留 put → Activate 原体验（裁决 §6.2 允许）；claim 仍建立、
@@ -212,9 +214,16 @@ generation/pin 机制不变。
 - `keyring_claims`：`UNIQUE(namespace_id, name)`；`generation` 与
   `pin_version` 均 `CHECK (> 0)`；释放/争议为状态变更 + generation
   递增，**行永不清除**（防 ABA 复活）。
-- 首次 claim：`INSERT ... ON CONFLICT (namespace_id, name) DO
-  NOTHING`，rowcount==1 者为唯一 winner；败者读现状按状态返回
-  403/409。
+- 首次 claim（**仅当行从未存在**）：INSERT 竞争唯一 (namespace_id,
+  name) 索引（实现为 SAVEPOINT + IntegrityError，SQLite/PG 同语义），
+  唯一 winner；败者读现状按状态返回 403/409。
+- **释放后重新认领【勘误 2 修订】**：released 行永不删除、也永不
+  走 INSERT——重新认领是带旧代际与状态条件的原子 UPDATE：
+  `UPDATE ... SET owner=..., status='active', generation=generation+1,
+  pin_version=1, material_tag=:new, proof_consumed_id=:pid WHERE id=:id
+  AND status='released' AND generation=:observed`；rowcount==0 即并发
+  败者 409；重新认领同样要求全新配对证明（shared）或 owner 本人
+  （personal）。
 - 轮换确认：`UPDATE keyring_claims SET pin_version = pin_version + 1,
   material_tag = :new, status = 'active' WHERE id = :id AND
   generation = :g AND pin_version = :v AND status IN
@@ -236,9 +245,20 @@ generation/pin 机制不变。
   反向查询 → 与计划冻结的 generation/pin_version/status 比对 →
   重算材质 HMAC（K_pin，恒时比较）→ 全部通过才执行。任一不符
   fail-closed（503/403 族）。
+- **三个入口的统一准入在 executor 侧【勘误 3 修订】**：
+  `/secrets/verify` 对 keyring:// 引用必须收到 control 签发的
+  purpose=verify claim ticket（60 秒预留，冻结目标 generation/
+  pin_version）——仅凭内部令牌不再解析任何 keyring 材质；
+  `/db/discover` 必须收到 purpose=discover ticket 并（配置了
+  control_url 时）做反向新鲜性比对；`/execute` 的 keyring 计划
+  必须携带 claim 上下文（缺失即拒）。首次激活因此天然是"已验证、
+  短期有效的 claim reservation"：control 先签 ticket，executor 在
+  预留下解析并返回材质 tag，control 随后才原子写入 claim/pin；
+  verify 失败则什么都不落库（T5 覆盖）。
 - 不做跨请求缓存（§3.1 "不能无限期缓存"）；本机回环调用延迟可
-  接受。FEAT-04 的 discover/verify 路径在 control 侧同一套 claim
-  校验（T5 覆盖）。
+  接受。shared 模式启动缺 control_url 即拒启（freshness 为硬
+  要求）；personal 模式未配 control_url 时跳过反向查询（单用户
+  信任域；代际校验仍在 control 侧 plan 组装时执行）。
 
 ### 8.4 A/T → 测试落点（测试设计）
 

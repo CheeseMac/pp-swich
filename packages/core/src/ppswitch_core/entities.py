@@ -469,6 +469,24 @@ class InvocationPlanDbQuery(DomainModel):
         return value
 
 
+class InvocationPlanClaim(DomainModel):
+    """SECRET-06: the frozen keyring-claim context inside a signed plan.
+
+    Establishes WHICH machine-level name claim authorizes this plan's
+    credential use, at which ownership generation and pin version, and
+    the full executor-held material tag the executor must recompute and
+    compare before any external request. The tag is credential-derived
+    data: it travels only on the internal control->executor channel and
+    never enters audits, agent-visible payloads or logs.
+    """
+
+    namespace_id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9/_-]{2,63}$")
+    generation: int = Field(ge=1)
+    pin_version: int = Field(ge=1)
+    material_tag: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+
+
 class InvocationPlan(DomainModel):
     """Structured, pre-approved call description handed to the Executor.
 
@@ -505,6 +523,9 @@ class InvocationPlan(DomainModel):
     deadline_epoch_s: float
     nonce: str = Field(min_length=16, max_length=64)
     db_query: InvocationPlanDbQuery | None = None
+    # SECRET-06: present for every keyring:// credential; the executor
+    # refuses to resolve keyring material without it (docs/41 section 8.3)
+    claim: InvocationPlanClaim | None = None
     # display-only metadata carried in the frozen snapshot; ignored by execution
     profile_label: str | None = None
 

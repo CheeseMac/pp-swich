@@ -471,6 +471,17 @@ def invoke_capability(
         session.commit()  # keep the deny audit even though we 403
         raise exc
 
+    # SECRET-06: freeze the live keyring claim into the signed plan (or
+    # fail closed: un-pinned / rotated-away / released credentials stop
+    # here, before any dispatch)
+    from ppswitch_control.services.keyring_claim_service import (
+        resolve_claim_context,
+    )
+
+    claim_context = resolve_claim_context(
+        session, settings=settings, connection=connection
+    )
+
     execution = version_row.execution or {}
     db_spec = execution.get("db") if isinstance(execution, dict) else None
     if db_spec is not None:
@@ -515,6 +526,7 @@ def invoke_capability(
             deadline_epoch_s=time.time() + PLAN_DEADLINE_S,
             nonce=uuid_module.uuid4().hex + uuid_module.uuid4().hex[:8],
             db_query=db_query,
+            claim=claim_context,
         )
     else:
         if endpoint is None:
@@ -553,6 +565,7 @@ def invoke_capability(
             idempotency_key=idempotency_key,
             deadline_epoch_s=time.time() + PLAN_DEADLINE_S,
             nonce=uuid_module.uuid4().hex + uuid_module.uuid4().hex[:8],
+            claim=claim_context,
         )
     plan_payload = json.loads(plan.model_dump_json())
     plan_payload["profile_label"] = profile.name

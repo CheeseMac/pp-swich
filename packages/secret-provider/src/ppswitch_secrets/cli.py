@@ -20,6 +20,74 @@ import json
 import sys
 
 
+def _claim_pair(args) -> int:
+    """SECRET-06 (docs/41 section 8.1 / errata 1): run on the EXECUTOR
+    machine. The one-time pairing code is read from a HIDDEN prompt (it
+    never appears in argv); the local proof is the nonce stored in the
+    OS-permission-protected attest directory of the executor user - the
+    generic internal token alone can never mint an attestation.
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    import httpx
+
+    executor_url = os.environ.get("PP_SWITCH_EXECUTOR_URL", "http://127.0.0.1:8912")
+    internal_token = os.environ.get("PP_SWITCH_INTERNAL_TOKEN", "")
+    if not internal_token:
+        print(
+            "PP_SWITCH_INTERNAL_TOKEN is required on the executor machine",
+            file=sys.stderr,
+        )
+        return 2
+    nonce_path = Path(
+        os.environ.get("PP_SWITCH_LOCAL_ATTEST_DIR", "")
+        or (Path.home() / ".ppswitch" / "attest")
+    ) / "local.nonce"
+    if not nonce_path.exists():
+        print(
+            f"local proof file not found: {nonce_path}\n"
+            "claim-pair must run on the machine (and as the user) that runs "
+            "the executor - it reads the protected local nonce",
+            file=sys.stderr,
+        )
+        return 2
+    local_nonce = nonce_path.read_text(encoding="utf-8").strip()
+    code = getpass.getpass(f"one-time pairing code for {args.name!r}: ")
+    if not code:
+        print("empty pairing code refused", file=sys.stderr)
+        return 2
+    try:
+        response = httpx.post(
+            f"{executor_url}/internal/v1/keyring/attest",
+            json={
+                "name": args.name,
+                "pairing_code": code,
+                "ticket": args.ticket,
+                "local_nonce": local_nonce,
+            },
+            headers={"X-Internal-Token": internal_token},
+            timeout=15.0,
+            trust_env=False,
+        )
+    except httpx.HTTPError as exc:
+        print(f"executor unreachable at {executor_url}: {exc}", file=sys.stderr)
+        return 3
+    if response.status_code != 200:
+        try:
+            message = response.json().get("error", {}).get("message", "")
+        except ValueError:
+            message = ""
+        print(f"attestation refused: {message or response.status_code}", file=sys.stderr)
+        return 3
+    attestation = response.json()["attestation"]
+    print("claim attestation (paste into the console activate dialog):")
+    print(json.dumps({"attestation": attestation}))
+    print("valid for 5 minutes, single use; never logged by pp-switch.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="ppswitch-secret",
@@ -50,6 +118,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser("delete", help="remove the secret").add_argument("name")
 
+    claim_pair = sub.add_parser(
+        "claim-pair",
+        help="SECRET-06 shared mode: obtain the executor-local claim attestation",
+    )
+    claim_pair.add_argument("name", help="keyring name being claimed")
+    claim_pair.add_argument(
+        "--ticket", required=True,
+        help="binding ticket shown with the console pairing (non-secret)",
+    )
+
     args = parser.parse_args(argv)
 
     from ppswitch_secrets.base import SecretProviderUnavailable
@@ -57,6 +135,8 @@ def main(argv: list[str] | None = None) -> int:
 
     provider = KeyringSecretProvider()
     try:
+        if args.command == "claim-pair":
+            return _claim_pair(args)
         if args.command == "put":
             if args.scheme == "postgres":
                 user = args.user or input(f"database role for {args.name!r}: ").strip()
