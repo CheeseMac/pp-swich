@@ -88,9 +88,8 @@ def create_app(
     executor_client: httpx.Client | None = None,
     run_migrations: bool | None = None,
 ) -> FastAPI:
-    assert settings is not None
-    _validate_shared_keyring_settings(settings)
     settings = settings or ControlSettings.from_env()
+    _validate_shared_keyring_settings(settings)
     _validate_production_settings(settings)
 
     if settings.db_url.startswith("sqlite:///"):
