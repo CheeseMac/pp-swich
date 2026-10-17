@@ -1306,6 +1306,7 @@ def create_claim_pairing_route(
         name=payload.name,
         internal_token=settings.internal_token,
         shared_mode=settings.shared_keyring,
+        ticket_key=settings.effective_claim_ticket_key,
     )
     return ok(
         request,

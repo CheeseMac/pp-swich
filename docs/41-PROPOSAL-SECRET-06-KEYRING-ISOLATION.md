@@ -63,7 +63,7 @@ CLI `ppswitch-secret put` 继续保持原样；可另增 `claim-pair` 本机命�
 
 **服务端执行契约：**
 
-- `create_connection`：已有 claim 且 owner 不符时返回 `403 KEYRING_NAME_CLAIMED`，隐藏 owner；共享模式下未 claim 只允许创建不可执行 `pending_claim` Connection。
+- `create_connection`：已有 claim 且 owner 不符时返回 `403 KEYRING_NAME_CLAIMED`，隐藏 owner；共享模式下未 claim 只允许创建不可执行 `pending_claim` Connection。迁移产生的 `pending_claim`/`disputed` 行**不授予任何所有权**：shared 模式恢复须完整双件证明（FIX-01），personal 模式仅候选 owner 本人可凭重验恢复。
 - `activate_connection`：证明验真 + executor verify + 数据库原子 claim/CAS；竞争时只允许一个 winner。verify 失败不留下 active claim，证明不得二次消费。避免网络调用时长时间持数据库锁，可采用短期 reservation + CAS 最终提交。
 - `plan assembly`：复查 Connection owner、claim owner/workspace、generation、pin_version、active 状态，并冻结至签名计划；继续执行已有 Agent 委托/能力权限。
 - executor **最后检查**：验证计划签名，获取可信的最新 claim 代际/撤销状态，重新解析 Keyring 材质并校验 MAC，然后才能发起外部请求。单 executor 可使用受信 control 新鲜性查询或等价强一致同步；不能只验证旧签名计划或无限期缓存。
@@ -189,10 +189,15 @@ verify 将完整标签通过受保护内部协议供 control 存储；签名计�
    CLI `ppswitch-secret claim-pair <name> --ticket <b64>` 在
    executor 同机运行。一次性码经**隐藏输入**（getpass）读入、随
    **请求体**提交——绝不进 argv/URL/日志；ticket 非秘密可经参数。
-   本机证明 = executor 启动时在 **0700 目录**写入并轮换的
-   `local.nonce`（0600）——CLI 必须读到该文件内容才能换取
-   attestation；**仅凭通用 `PP_SWITCH_INTERNAL_TOKEN` 永远拿不到
-   attestation**（attest 端点同时校验两者）。attestation =
+   本机证明 = **OS 保护的本地 IPC 通道**【定向修复 FIX-03 后的实
+   现形态】：shared 模式 executor 在 0700 attest 目录内开一个
+   **AF_UNIX socket**（`attest.sock`，0600；Windows 无 AF_UNIX 时为
+   仅回环 TCP，随机端口写入同目录 `listener.port`，读取该文件本身
+   就需要本机目录权限）。attestation **只在本地通道签发**——HTTP
+   的 `/internal/v1/keyring/attest` 已移除（404），持内部令牌+偷来
+   的 nonce 也无法经 HTTP 取证。一次性码经隐藏输入随通道请求体提
+   交；`local.nonce`（0600）由 CLI 读出并随请求提交，**每次成功签
+   发即轮换消费**（泄露值首次使用即死）。attestation =
    `HMAC(K_attest, canonical(namespace_id || name || principal_id ||
    workspace_id || proof_id || sha256(code) || purpose || exp))`，
    5 分钟、单次；K_attest 与 K_pin 分离。
@@ -280,11 +285,18 @@ generation/pin 机制不变。
 ### 8.5 配置面
 
 - `PP_SWITCH_SHARED_KEYRING`（control+executor 一致，默认 false）；
-  true 时缺 `namespace_id` / `K_pin` / `K_attest` / claim 数据库表
-  任一项 → 拒绝启动（T7）。
+  true 时缺 `namespace_id` / `K_pin` / `K_attest` / **`K_claim_ticket`
+  / `K_plan_signing`** / claim 数据库表任一项 → 拒绝启动（T7/R06）。
 - `K_pin`/`K_attest` 仅 executor 侧 env（`PP_SWITCH_PIN_KEY` /
   `PP_SWITCH_ATTEST_KEY`），非 demo 缺失拒启；与内部令牌、委托
   签名密钥互不复用。
+- **授权签名密钥与通道令牌分离【FIX-02】**：`PP_SWITCH_CLAIM_
+  TICKET_KEY`（签/验 claim ticket 与 pairing ticket）与
+  `PP_SWITCH_PLAN_SIGNING_KEY`（签/验执行计划）——control 与
+  executor 两侧配置一致；shared 模式**必须显式设置**（回退内部令
+  牌即拒启），个人模式回退内部令牌（单用户信任域，Alpha 无感）。
+  票据签发点只存在于通过授权检查之后的服务路径（激活/轮换确认/
+  发现），不存在任何通用签票接口；票据带 purpose+aud=executor。
 
 **随修订稿一并申请：复核通过即签发实施许可，按 §7 拆分动工。**
 

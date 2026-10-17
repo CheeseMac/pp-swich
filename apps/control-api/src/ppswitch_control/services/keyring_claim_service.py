@@ -126,6 +126,7 @@ def create_pairing(
     name: str,
     internal_token: str,
     shared_mode: bool,
+    ticket_key: str | None = None,
 ) -> tuple[KeyringClaimPairingRow, str]:
     if not shared_mode:
         raise ApiError(
@@ -144,7 +145,7 @@ def create_pairing(
     code = f"claim-{secrets.token_hex(8)}"
     proof_id = secrets.token_hex(8)
     ticket = sign_pairing_ticket(
-        key=internal_token,
+        key=ticket_key or internal_token,
         namespace_id=namespace_id,
         name=name,
         principal_id=str(principal_id),
@@ -346,10 +347,35 @@ def acquire_or_check_claim(
         session.commit()
         raise _BORROW_DENIED
     elif claim.status == "pending_claim":
-        recovery = True  # legacy migration candidate: owner recovers by re-verify
+        # FIX-01: a legacy migration candidate confers NO ownership in
+        # shared mode - recovery requires the full two-part proof (one-time
+        # pairing code + executor-local attestation), exactly like a first
+        # claim. Personal mode (single-user trust domain) lets the
+        # candidate owner recover by plain re-verification.
+        if shared_mode:
+            if not (pairing_code and attestation):
+                raise ApiError(
+                    ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
+                    "Recovering a legacy claim requires a pairing code + "
+                    "local attestation (docs/41 A7)",
+                )
+            pairing = _redeem_pairing(
+                session, namespace_id=namespace_id, name=name,
+                principal_id=principal_id, pairing_code=pairing_code,
+                attestation=attestation, settings=settings,
+                executor_client=executor_client,
+            )
+            proof_id = pairing.proof_id
+        else:
+            if claim.owner_principal_id != principal_id:
+                _audit(session, claim.owner_workspace_id, principal_id,
+                       "claim.rejected", "denied", {"name": name, "reason": "borrow"})
+                session.commit()
+                raise _BORROW_DENIED
+            proof_id = "recovery-reverify"
+        recovery = True
         target_generation = claim.generation
         target_pin = 1
-        proof_id = "recovery-reverify"
     else:
         # active / pending_rotation by the owner
         target_generation = claim.generation
@@ -361,7 +387,7 @@ def acquire_or_check_claim(
     from ppswitch_executor.claim_security import sign_claim_ticket
 
     ticket = sign_claim_ticket(
-        key=settings.internal_token,
+        key=settings.effective_claim_ticket_key,
         purpose="verify",
         namespace_id=namespace_id,
         name=name,
@@ -611,7 +637,7 @@ def confirm_rotation(
     from ppswitch_executor.claim_security import sign_claim_ticket
 
     ticket = sign_claim_ticket(
-        key=settings.internal_token,
+        key=settings.effective_claim_ticket_key,
         purpose="verify",
         namespace_id=settings.namespace_id,
         name=name,
@@ -761,7 +787,7 @@ def sign_discover_ticket(*, settings, claim: InvocationPlanClaim) -> str:
     from ppswitch_executor.claim_security import sign_claim_ticket
 
     return sign_claim_ticket(
-        key=settings.internal_token,
+        key=settings.effective_claim_ticket_key,
         purpose="discover",
         namespace_id=claim.namespace_id,
         name=claim.name,

@@ -680,7 +680,7 @@ def invoke_capability(
     # --- dispatch to the trusted executor with a signed, frozen snapshot
     from ppswitch_executor.plan_signing import sign_plan
 
-    signature = sign_plan(plan_payload, settings.internal_token)
+    signature = sign_plan(plan_payload, settings.effective_plan_signing_key)
     invocation.status = InvocationStatus.RUNNING.value
     session.flush()  # the in-memory plan is frozen before dispatch (SEC-017)
 

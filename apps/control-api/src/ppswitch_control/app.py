@@ -61,12 +61,35 @@ def create_app_from_env():
     return create_app()
 
 
+def _validate_shared_keyring_settings(settings: ControlSettings) -> None:
+    """FIX-02: shared deployments must configure the separated
+    authorization keys and the machine namespace explicitly."""
+    if not settings.shared_keyring:
+        return
+    import os
+
+    problems = []
+    if not settings.claim_ticket_key:
+        problems.append("PP_SWITCH_CLAIM_TICKET_KEY")
+    if not settings.plan_signing_key:
+        problems.append("PP_SWITCH_PLAN_SIGNING_KEY")
+    if os.environ.get("PP_SWITCH_NAMESPACE_ID") is None and settings.namespace_id == "local":
+        problems.append("PP_SWITCH_NAMESPACE_ID")
+    if problems:
+        raise RuntimeError(
+            "Shared-keyring mode requires explicit configuration: "
+            + ", ".join(problems)
+        )
+
+
 def create_app(
     settings: ControlSettings | None = None,
     *,
     executor_client: httpx.Client | None = None,
     run_migrations: bool | None = None,
 ) -> FastAPI:
+    assert settings is not None
+    _validate_shared_keyring_settings(settings)
     settings = settings or ControlSettings.from_env()
     _validate_production_settings(settings)
 

@@ -44,11 +44,9 @@ from ppswitch_executor.adapters.mock_adapter import MockAdapter
 from ppswitch_executor.claim_security import (
     ClaimSecurity,
     material_tag,
-    sign_attestation,
     tags_match,
     verify_attestation,
     verify_claim_ticket,
-    verify_pairing_ticket,
 )
 from ppswitch_executor.network_policy import check_outbound_target
 from ppswitch_executor.plan_signing import NonceStore, verify_plan_signature
@@ -90,6 +88,14 @@ class ExecutorSettings(BaseModel):
     )
     attest_key: str = Field(
         default_factory=lambda: os.environ.get("PP_SWITCH_ATTEST_KEY", "")
+    )
+    # FIX-02: authorization signing keys, separate trust channels from the
+    # transport token; mandatory (explicit) in shared mode
+    claim_ticket_key: str = Field(
+        default_factory=lambda: os.environ.get("PP_SWITCH_CLAIM_TICKET_KEY", "")
+    )
+    plan_signing_key: str = Field(
+        default_factory=lambda: os.environ.get("PP_SWITCH_PLAN_SIGNING_KEY", "")
     )
     local_attest_dir: str = Field(
         default_factory=lambda: os.environ.get(
@@ -184,6 +190,8 @@ class ExecutorState:
             shared=self.settings.shared_keyring,
             pin_key=self.settings.pin_key,
             attest_key=self.settings.attest_key,
+            claim_ticket_key=self.settings.claim_ticket_key,
+            plan_signing_key=self.settings.plan_signing_key,
             local_attest_dir=self.settings.local_attest_dir,
             control_url=self.settings.control_url,
         )
@@ -257,7 +265,7 @@ def create_app(
                     "Keyring verification requires a claim ticket",
                 )
             ticket_context = verify_claim_ticket(
-                payload.claim_ticket, key=state.settings.internal_token,
+                payload.claim_ticket, key=state.claims.claim_ticket_key,
                 purpose="verify",
             )
             _name = payload.secret_ref[len("keyring://"):]
@@ -314,43 +322,16 @@ def create_app(
     def keyring_attest(
         payload: AttestRequest, x_internal_token: str = Header(default="")
     ) -> dict:
-        """SECRET-06 shared mode: sign a first-claim ownership attestation.
+        """FIX-03: ownership attestations are NEVER minted over HTTP.
 
-        Requires BOTH the internal token AND a valid nonce read from the
-        OS-protected local attest directory - the generic token alone can
-        never mint an attestation (docs/41 errata 1). The pairing code
-        travels in the request body (hidden prompt on the CLI side), the
-        binding comes from the control-signed pairing ticket.
+        The signing surface is the OS-protected local channel only
+        (AF_UNIX socket in the executor user's 0700 attest directory on
+        POSIX; loopback + protected port file on Windows) - see
+        LocalAttestListener. Even a valid internal token plus a stolen
+        nonce cannot mint an attestation here.
         """
         require_internal_token(x_internal_token)
-        if not state.claims.shared or not state.claims.attest_key:
-            raise ApiError(ErrorCode.NOT_FOUND, "No such endpoint")
-        if not state.claims.nonces.validate(payload.local_nonce):
-            raise ApiError(
-                ErrorCode.KEYRING_CLAIM_PROOF_INVALID,
-                "Local proof invalid: run ppswitch-secret claim-pair on the "
-                "executor machine (reads the protected local nonce)",
-            )
-        binding = verify_pairing_ticket(
-            payload.ticket, key=state.settings.internal_token
-        )
-        if binding["name"] != payload.name.lower():
-            raise ApiError(
-                ErrorCode.KEYRING_CLAIM_PROOF_INVALID, "Ticket does not match the name"
-            )
-        import hashlib
-
-        code_hash = hashlib.sha256(payload.pairing_code.encode("utf-8")).hexdigest()
-        attestation = sign_attestation(
-            state.claims.attest_key,
-            namespace_id=binding["namespace_id"],
-            name=binding["name"],
-            principal_id=binding["principal_id"],
-            workspace_id=binding["workspace_id"],
-            proof_id=binding["proof_id"],
-            pairing_code_hash=code_hash,
-        )
-        return {"attestation": attestation, "purpose": "keyring.claim"}
+        raise ApiError(ErrorCode.NOT_FOUND, "No such endpoint")
 
     @app.post("/internal/v1/keyring/attest/verify")
     def keyring_attest_verify(
@@ -396,7 +377,7 @@ def create_app(
                     "Keyring discovery requires a claim ticket",
                 )
             ticket = verify_claim_ticket(
-                payload.claim_ticket, key=state.settings.internal_token,
+                payload.claim_ticket, key=state.claims.claim_ticket_key,
                 purpose="discover",
             )
             if ticket["name"] != payload.secret_ref[len("keyring://"):]:
@@ -421,7 +402,7 @@ def create_app(
     ) -> dict:
         require_internal_token(x_internal_token)
         if not verify_plan_signature(payload.plan, payload.signature,
-            state.settings.internal_token):
+            state.claims.plan_signing_key):
             raise ApiError(ErrorCode.INVALID_SIGNATURE, "Plan signature verification failed")
 
         try:

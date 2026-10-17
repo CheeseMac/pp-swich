@@ -102,3 +102,72 @@ K_pin 遗失的恢复路径 = 所有连接重新激活重钉（文档化的 fail
 - 单 control ↔ 单 executor ↔ 单 keyring 命名空间（docs/41 §6.1）。
 - 本切片 ≠ SECRET-06 生产 Gate 关闭（OpenBao 腿未动）；不改变
   Gate R1 其余门禁与 M2 实机待办状态。
+
+## 6. 定向修复轮（2026-10-17，基线 `9e2f5c9` 之后的修复 PR）
+
+评审复核认可核心架构、暂缓完整验收，点名三个接线缺口。全部修复：
+
+### FIX-01 · 遗留 pending_claim 恢复必须重新证明属主
+
+`acquire_or_check_claim` 的 `pending_claim` 分支此前直接进入恢复
+（shared 模式也免证明）。现改为：**shared 模式下迁移产生的
+pending_claim / disputed 不授予任何所有权**——恢复走与首次 claim
+完全相同的双件证明（一次性码 + 本机 attestation，消费后原子 CAS
+激活）；personal 模式保留候选 owner 的免密重验（单用户信任域，
+不被强制双件）。
+
+### FIX-02 · 通道令牌与授权签名彻底分离
+
+新增两把独立密钥（与内部令牌、K_pin、K_attest、委托密钥互不复用）：
+`PP_SWITCH_CLAIM_TICKET_KEY`（claim/pairing ticket 签验）与
+`PP_SWITCH_PLAN_SIGNING_KEY`（执行计划签验）。**shared 模式必须
+显式配置，回退内部令牌即拒绝启动**（control 与 executor 双侧校
+验）；个人模式回退内部令牌（单用户信任域，Alpha 无感）。票据增
+加 `aud=executor` 受众字段；签发点仅存在于授权检查之后的服务路
+径，无通用签票接口。持内部令牌者伪造的 ticket/计划签名在
+executor 一律无效。
+
+### FIX-03 · 本机 attestation 改为 OS 保护的本地通道
+
+HTTP 签发端点 `/internal/v1/keyring/attest` **已移除**（任何模式
+404）。签发面改为 executor 在 0700 attest 目录内监听的本地通道：
+POSIX 为 AF_UNIX socket（0600，连接本身受 OS 文件权限门禁，远程
+不可达）；Windows 为仅回环 TCP（随机端口写入同目录 port 文件，
+读文件即需本机目录权限）。一次性码仍走隐藏输入；`local.nonce`
+**每次成功签发即轮换消费**——泄露值首次使用即死。CLI
+`ppswitch-secret claim-pair` 改拨本地通道（不再发 HTTP、不再需要
+内部令牌）。
+
+### R01–R12 测试映射
+
+| # | 断言 | 落点 |
+| --- | --- | --- |
+| R01 | shared 下 pending_claim 免证明恢复 → 403 | `TestFix01LegacyRecovery::test_r01` |
+| R02 | shared 下带双件证明恢复 → active+钉扎 | `TestFix01LegacyRecovery::test_r02` |
+| R03 | personal 下候选 owner 免密恢复不回归 | `TestFix01LegacyRecovery::test_r03` |
+| R04 | 内部令牌伪造的 claim ticket → executor 拒 | `TestFix02KeySeparation::test_r04` |
+| R05 | 内部令牌签的计划（显式计划密钥时）→ INVALID_SIGNATURE | `TestFix02KeySeparation::test_r05` |
+| R06/R06b | shared 缺 ticket/plan 密钥拒启 | `TestFix02Startup` |
+| R07 | HTTP attest 端点全模式 404（含真 nonce+令牌） | `TestSharedModeProofs::test_r07` |
+| R08 | 本地通道签发可用（现有共享首claim流程即经通道） | `TestSharedModeProofs::test_first_claim_requires_proof_and_succeeds_with_it` |
+| R09 | nonce 成功即消费，旧值重放拒绝 | `TestSharedModeProofs::test_r09` |
+| R10 | 无保护目录内容不可达通道 | `TestSharedModeProofs::test_r10` |
+| R11 | 票据受众不符拒绝 | `TestFix02KeySeparation::test_r11` |
+| R12 | attestation 绑定错码哈希兑换拒绝 | `TestSharedModeProofs::test_wrong_code_or_nonce_never_attests_or_redeems` |
+
+### 更新后的共享部署环境清单
+
+```bash
+# executor 侧
+PP_SWITCH_SHARED_KEYRING=true
+PP_SWITCH_NAMESPACE_ID=<机器唯一 id>
+PP_SWITCH_PIN_KEY=...            # 全长 MAC 密钥
+PP_SWITCH_ATTEST_KEY=...         # 本机 attestation 签发
+PP_SWITCH_CLAIM_TICKET_KEY=...   # FIX-02：票据签验（control 一致）
+PP_SWITCH_PLAN_SIGNING_KEY=...   # FIX-02：计划签验（control 一致）
+PP_SWITCH_CONTROL_URL=http://<control>:8911
+# control 侧：同 SHARED/NAMESPACE/CLAIM_TICKET/PLAN_SIGNING 四项
+```
+
+回归基线：A1–A8/T1–T8 全部保持、FEAT-03/04/05A 回归、M2 install
+smoke、真实 PostgreSQL matrix、全量 CI 六 job + Security gates。

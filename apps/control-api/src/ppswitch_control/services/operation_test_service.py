@@ -246,7 +246,7 @@ def test_operation(
 
     from ppswitch_executor.plan_signing import sign_plan
 
-    signature = sign_plan(plan_payload, settings.internal_token)
+    signature = sign_plan(plan_payload, settings.effective_plan_signing_key)
     try:
         response = executor_client.post(
             f"{settings.executor_url}/internal/v1/execute",
@@ -426,7 +426,7 @@ def _test_db_operation(
 
     from ppswitch_executor.plan_signing import sign_plan
 
-    signature = sign_plan(plan_payload, settings.internal_token)
+    signature = sign_plan(plan_payload, settings.effective_plan_signing_key)
     try:
         response = executor_client.post(
             f"{settings.executor_url}/internal/v1/execute",

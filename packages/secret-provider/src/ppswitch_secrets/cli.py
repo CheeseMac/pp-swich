@@ -21,30 +21,23 @@ import sys
 
 
 def _claim_pair(args) -> int:
-    """SECRET-06 (docs/41 section 8.1 / errata 1): run on the EXECUTOR
-    machine. The one-time pairing code is read from a HIDDEN prompt (it
-    never appears in argv); the local proof is the nonce stored in the
-    OS-permission-protected attest directory of the executor user - the
-    generic internal token alone can never mint an attestation.
+    """SECRET-06 (docs/41 section 8.1 / errata 1 + FIX-03): run on the
+    EXECUTOR machine. The one-time pairing code is read from a HIDDEN
+    prompt (never argv); the request travels over the OS-protected local
+    channel only, and the single-use nonce from the protected directory
+    is consumed by a successful attestation.
     """
     import json
     import os
     from pathlib import Path
 
-    import httpx
+    from ppswitch_secrets.local_channel import local_attest_request
 
-    executor_url = os.environ.get("PP_SWITCH_EXECUTOR_URL", "http://127.0.0.1:8912")
-    internal_token = os.environ.get("PP_SWITCH_INTERNAL_TOKEN", "")
-    if not internal_token:
-        print(
-            "PP_SWITCH_INTERNAL_TOKEN is required on the executor machine",
-            file=sys.stderr,
-        )
-        return 2
-    nonce_path = Path(
+    attest_dir = Path(
         os.environ.get("PP_SWITCH_LOCAL_ATTEST_DIR", "")
         or (Path.home() / ".ppswitch" / "attest")
-    ) / "local.nonce"
+    )
+    nonce_path = attest_dir / "local.nonce"
     if not nonce_path.exists():
         print(
             f"local proof file not found: {nonce_path}\n"
@@ -58,30 +51,24 @@ def _claim_pair(args) -> int:
     if not code:
         print("empty pairing code refused", file=sys.stderr)
         return 2
-    try:
-        response = httpx.post(
-            f"{executor_url}/internal/v1/keyring/attest",
-            json={
-                "name": args.name,
-                "pairing_code": code,
-                "ticket": args.ticket,
-                "local_nonce": local_nonce,
-            },
-            headers={"X-Internal-Token": internal_token},
-            timeout=15.0,
-            trust_env=False,
-        )
-    except httpx.HTTPError as exc:
-        print(f"executor unreachable at {executor_url}: {exc}", file=sys.stderr)
+    # FIX-03: the request travels over the OS-protected LOCAL channel
+    # (AF_UNIX socket / loopback port file inside the executor user's
+    # 0700 attest directory) - never over HTTP, never with the generic
+    # internal token
+    reply = local_attest_request(
+        str(attest_dir),
+        {
+            "name": args.name,
+            "pairing_code": code,
+            "ticket": args.ticket,
+            "local_nonce": local_nonce,
+        },
+    )
+    if "attestation" not in reply:
+        print(f"attestation refused: {reply.get('error', 'unknown')}",
+              file=sys.stderr)
         return 3
-    if response.status_code != 200:
-        try:
-            message = response.json().get("error", {}).get("message", "")
-        except ValueError:
-            message = ""
-        print(f"attestation refused: {message or response.status_code}", file=sys.stderr)
-        return 3
-    attestation = response.json()["attestation"]
+    attestation = reply["attestation"]
     print("claim attestation (paste into the console activate dialog):")
     print(json.dumps({"attestation": attestation}))
     print("valid for 5 minutes, single use; never logged by pp-switch.")

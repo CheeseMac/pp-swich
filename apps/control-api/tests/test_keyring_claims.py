@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import uuid
 
 import pytest
@@ -86,6 +87,8 @@ def _build_stack(harness, tmp_path, *, shared: bool):
             shared_keyring=True,
             pin_key="ci-pin-key-synthetic-06",
             attest_key="ci-attest-key-synthetic-06",
+            claim_ticket_key="ci-ticket-key-synthetic-06",
+            plan_signing_key="ci-plan-key-synthetic-06",
             local_attest_dir=str(tmp_path / "attest"),
             control_url="http://127.0.0.1:9",  # execute-path only; unused here
         )
@@ -93,6 +96,8 @@ def _build_stack(harness, tmp_path, *, shared: bool):
             db_url=harness.db_url, executor_url="http://executor.test.internal",
             auto_migrate=False, demo_mode=True,
             shared_keyring=True, namespace_id="ci-machine",
+            claim_ticket_key="ci-ticket-key-synthetic-06",
+            plan_signing_key="ci-plan-key-synthetic-06",
         )
     else:
         executor_settings = ExecutorSettings(demo_mode=True)
@@ -314,15 +319,17 @@ class TestSharedModeProofs:
         return created.json()["data"]
 
     def _attest(self, shared, name: str, pairing: dict, code: str) -> str:
+        """FIX-03: exactly what the CLI does - dial the OS-protected local
+        channel (never HTTP) with the nonce from the protected directory."""
+        from ppswitch_secrets.local_channel import local_attest_request
+
         nonce = (shared["attest_dir"] / "local.nonce").read_text(encoding="utf-8").strip()
-        response = shared["executor"].post(
-            "/internal/v1/keyring/attest",
-            json={"name": name, "pairing_code": code,
-                  "ticket": pairing["ticket"], "local_nonce": nonce},
-            headers={"X-Internal-Token": "dev-internal-token-synthetic"},
-        )
-        assert response.status_code == 200, response.text
-        return response.json()["attestation"]
+        reply = local_attest_request(str(shared["attest_dir"]), {
+            "name": name, "pairing_code": code,
+            "ticket": pairing["ticket"], "local_nonce": nonce,
+        })
+        assert "attestation" in reply, reply
+        return reply["attestation"]
 
     def _shared_conn(self, shared, name: str):
         service_id = _service(shared)
@@ -381,13 +388,13 @@ class TestSharedModeProofs:
         fake_keyring.put("shared-2", {"auth_scheme": "api_key",
                                       "material": {"api_key": "MOCKKEY-s2"}})
         pairing = self._pair(shared_stack, "shared-2")
-        bad_nonce = shared_stack["executor"].post(
-            "/internal/v1/keyring/attest",
-            json={"name": "shared-2", "pairing_code": pairing["pairing_code"],
-                  "ticket": pairing["ticket"], "local_nonce": "0" * 64},
-            headers={"X-Internal-Token": "dev-internal-token-synthetic"},
-        )
-        assert bad_nonce.status_code == 403  # no local file access, no proof
+        from ppswitch_secrets.local_channel import local_attest_request
+
+        bad_nonce = local_attest_request(str(shared_stack["attest_dir"]), {
+            "name": "shared-2", "pairing_code": pairing["pairing_code"],
+            "ticket": pairing["ticket"], "local_nonce": "0" * 64,
+        })
+        assert "error" in bad_nonce  # no valid protected-file nonce, no proof
         # attestation over the WRONG code: redeeming with the real code fails
         wrong_att = self._attest(shared_stack, "shared-2", pairing, "wrong-code-1")
         _service_id, connection_id = self._shared_conn(shared_stack, "shared-2")
@@ -399,14 +406,40 @@ class TestSharedModeProofs:
         )
         assert activated.status_code == 403
 
-    def test_personal_executor_never_attests(self, personal):
-        response = personal["executor"].post(
-            "/internal/v1/keyring/attest",
-            json={"name": "x", "pairing_code": "claim-1234",
-                  "ticket": "t" * 40, "local_nonce": "n" * 64},
-            headers={"X-Internal-Token": "dev-internal-token-synthetic"},
-        )
-        assert response.status_code == 404
+    def test_r07_http_attest_endpoint_is_gone_everywhere(self, personal, shared_stack):
+        """R07: even a valid internal token + a real nonce can never mint
+        an attestation over HTTP - the signing surface is the OS-protected
+        local channel only (FIX-03)."""
+        nonce = (shared_stack["attest_dir"] / "local.nonce").read_text(encoding="utf-8").strip()
+        for executor in (personal["executor"], shared_stack["executor"]):
+            response = executor.post(
+                "/internal/v1/keyring/attest",
+                json={"name": "x", "pairing_code": "claim-1234",
+                      "ticket": "t" * 40, "local_nonce": nonce},
+                headers={"X-Internal-Token": "dev-internal-token-synthetic"},
+            )
+            assert response.status_code == 404
+
+    def test_r09_old_nonce_reuse_refused(self, shared_stack, fake_keyring):
+        """R09: a successful attestation CONSUMES the nonce - replaying the
+        same (leaked) value against a fresh pairing is refused."""
+        fake_keyring.put("r09-key", {"auth_scheme": "api_key",
+                                     "material": {"api_key": "MOCKKEY-r09"}})
+        from ppswitch_secrets.local_channel import local_attest_request
+
+        pairing1 = self._pair(shared_stack, "r09-key")
+        nonce = (shared_stack["attest_dir"] / "local.nonce").read_text(encoding="utf-8").strip()
+        first = local_attest_request(str(shared_stack["attest_dir"]), {
+            "name": "r09-key", "pairing_code": pairing1["pairing_code"],
+            "ticket": pairing1["ticket"], "local_nonce": nonce,
+        })
+        assert "attestation" in first
+        pairing2 = self._pair(shared_stack, "r09-key")
+        replay = local_attest_request(str(shared_stack["attest_dir"]), {
+            "name": "r09-key", "pairing_code": pairing2["pairing_code"],
+            "ticket": pairing2["ticket"], "local_nonce": nonce,
+        })
+        assert "error" in replay  # consumed by the first success
 
 
 class TestFullMacNotTruncated:
@@ -552,3 +585,200 @@ class TestAuditHygiene:
                 len(cleaned) == 64
                 and all(char in "0123456789abcdef" for char in cleaned)
             ), f"full material tag leaked into audit: {cleaned}"
+
+
+class TestFix01LegacyRecovery:
+    """FIX-01 (A7/T1): a migration-generated pending_claim confers NO
+    ownership in shared mode - recovery demands the two-part proof;
+    personal mode keeps the candidate owner's plain re-verification."""
+
+    def _seed_pending_claim(self, harness, name: str) -> None:
+        from ppswitch_db.models import KeyringClaimRow
+
+        session = harness.session_factory()
+        try:
+            session.add(KeyringClaimRow(
+                id=uuid.uuid4(), namespace_id="ci-machine", name=name,
+                owner_principal_id=_principal_id(harness, "Alice (demo)"),
+                owner_workspace_id=_workspace_id(harness, "demo-a-"),
+                auth_scheme="api_key", generation=1, pin_version=1,
+                material_tag=None, status="pending_claim",
+                proof_consumed_id="legacy-migration-candidate",
+            ))
+            session.commit()
+        finally:
+            session.close()
+
+    def test_r01_shared_recovery_without_proof_refused(self, harness, shared_stack, fake_keyring):
+        fake_keyring.put("legacy-key", {"auth_scheme": "api_key",
+                                        "material": {"api_key": "MOCKKEY-legacy"}})
+        self._seed_pending_claim(harness, "legacy-key")
+        service_id = _service(shared_stack)
+        connection_id = _conn(shared_stack, service_id, "legacy-key")
+        refused = _activate(shared_stack, connection_id)
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["error"]["code"] == "KEYRING_CLAIM_PROOF_INVALID"
+
+    def test_r02_shared_recovery_with_proof_succeeds(self, harness, shared_stack, fake_keyring):
+        fake_keyring.put("legacy-ok", {"auth_scheme": "api_key",
+                                       "material": {"api_key": "MOCKKEY-legacy-ok"}})
+        self._seed_pending_claim(harness, "legacy-ok")
+        service_id = _service(shared_stack)
+        connection_id = _conn(shared_stack, service_id, "legacy-ok")
+        proofs = TestSharedModeProofs()
+        pairing = proofs._pair(shared_stack, "legacy-ok")
+        attestation = proofs._attest(shared_stack, "legacy-ok", pairing,
+                                     pairing["pairing_code"])
+        activated = shared_stack["control"].post(
+            f"/api/v1/connections/{connection_id}/activate",
+            json={"pairing_code": pairing["pairing_code"],
+                  "attestation": attestation},
+            headers=_alice(),
+        )
+        assert activated.status_code == 200, activated.text
+        from ppswitch_db.models import KeyringClaimRow
+
+        session = harness.session_factory()
+        try:
+            claim = session.scalars(select(KeyringClaimRow).where(
+                KeyringClaimRow.name == "legacy-ok")).one()
+            assert claim.status == "active" and claim.material_tag
+        finally:
+            session.close()
+
+    def test_r03_personal_recovery_stays_passwordless_for_owner(
+        self, harness, personal, fake_keyring
+    ):
+        from ppswitch_db.models import KeyringClaimRow
+
+        fake_keyring.put("legacy-p", {"auth_scheme": "api_key",
+                                      "material": {"api_key": "MOCKKEY-legacy-p"}})
+        session = harness.session_factory()
+        try:
+            session.add(KeyringClaimRow(
+                id=uuid.uuid4(), namespace_id="local", name="legacy-p",
+                owner_principal_id=_principal_id(harness, "Alice (demo)"),
+                owner_workspace_id=_workspace_id(harness, "demo-a-"),
+                auth_scheme="api_key", generation=1, pin_version=1,
+                material_tag=None, status="pending_claim",
+                proof_consumed_id="legacy-migration-candidate",
+            ))
+            session.commit()
+        finally:
+            session.close()
+        service_id = _service(personal)
+        connection_id = _conn(personal, service_id, "legacy-p")
+        activated = _activate(personal, connection_id)
+        assert activated.status_code == 200, activated.text
+
+
+class TestFix02KeySeparation:
+    """FIX-02: the transport token is NOT an authorization signing key -
+    forged tickets/plans signed with the internal token are refused when
+    dedicated keys are configured."""
+
+    def test_r04_forged_claim_ticket_with_internal_token_refused(self, shared_stack):
+        from ppswitch_executor.claim_security import sign_claim_ticket
+
+        forged = sign_claim_ticket(
+            key="dev-internal-token-synthetic",  # the TRANSPORT token
+            purpose="verify", namespace_id="ci-machine", name="whatever",
+            generation=1, pin_version=1, ttl_s=60,
+        )
+        response = shared_stack["executor"].post(
+            "/internal/v1/secrets/verify",
+            json={"secret_ref": "keyring://whatever", "auth_scheme": "api_key",
+                  "claim_ticket": forged},
+            headers={"X-Internal-Token": "dev-internal-token-synthetic"},
+        )
+        assert response.status_code == 403, response.text
+        assert response.json()["error"]["code"] == "KEYRING_CLAIM_PROOF_INVALID"
+
+    def test_r05_plan_signed_with_transport_token_refused(self, tmp_path):
+        """An explicit plan-signing key makes internal-token signatures
+        invalid at the executor (the two trust channels are separate)."""
+        from fastapi.testclient import TestClient
+        from ppswitch_executor.main import ExecutorSettings
+        from ppswitch_executor.main import create_app as create_executor_app
+        from ppswitch_executor.plan_signing import sign_plan
+
+        executor = TestClient(create_executor_app(ExecutorSettings(
+            demo_mode=True, plan_signing_key="ci-plan-key-synthetic-06",
+        )))
+        plan = {"invocation_id": str(uuid.uuid4()), "nonce": "n" * 32,
+                "deadline_epoch_s": time.time() + 60}
+        response = executor.post(
+            "/internal/v1/execute",
+            json={"plan": plan,
+                  "signature": sign_plan(plan, "dev-internal-token-synthetic")},
+            headers={"X-Internal-Token": "dev-internal-token-synthetic"},
+        )
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "INVALID_SIGNATURE"
+
+    def test_r11_ticket_audience_mismatch_refused(self):
+        from ppswitch_executor.claim_security import sign_claim_ticket, verify_claim_ticket
+
+        key = "ci-ticket-key-synthetic-06"
+        ticket = sign_claim_ticket(
+            key=key, purpose="verify", namespace_id="ns", name="n",
+            generation=1, pin_version=1, ttl_s=60, extra={"aud": "someone-else"},
+        )
+        with pytest.raises(ApiError):
+            verify_claim_ticket(ticket, key=key, purpose="verify")
+
+
+class TestFix02Startup:
+    """R06: shared mode refuses to start without the dedicated keys."""
+
+    def test_r06_shared_without_ticket_key_refused(self, tmp_path):
+        from ppswitch_executor.main import ExecutorSettings
+        from ppswitch_executor.main import create_app as create_executor_app
+
+        with pytest.raises(RuntimeError):
+            create_executor_app(ExecutorSettings(
+                demo_mode=True, shared_keyring=True,
+                pin_key="k" * 8, attest_key="a" * 8,
+                plan_signing_key="p" * 8,
+                local_attest_dir=str(tmp_path), control_url="http://127.0.0.1:9",
+            ))
+
+    def test_r06b_shared_without_plan_key_refused(self, tmp_path):
+        from ppswitch_executor.main import ExecutorSettings
+        from ppswitch_executor.main import create_app as create_executor_app
+
+        with pytest.raises(RuntimeError):
+            create_executor_app(ExecutorSettings(
+                demo_mode=True, shared_keyring=True,
+                pin_key="k" * 8, attest_key="a" * 8,
+                claim_ticket_key="t" * 8,
+                local_attest_dir=str(tmp_path), control_url="http://127.0.0.1:9",
+            ))
+
+
+def _principal_id(harness, display_name: str):
+    from ppswitch_db.models import PrincipalRow
+
+    session = harness.session_factory()
+    try:
+        row = session.scalars(
+            select(PrincipalRow).where(PrincipalRow.display_name == display_name)
+        ).first()
+        assert row is not None
+        return row.id
+    finally:
+        session.close()
+
+
+def _workspace_id(harness, slug_prefix: str):
+    from ppswitch_db.models import WorkspaceRow
+
+    session = harness.session_factory()
+    try:
+        row = session.scalars(
+            select(WorkspaceRow).where(WorkspaceRow.slug.startswith(slug_prefix))
+        ).first()
+        assert row is not None
+        return row.id
+    finally:
+        session.close()

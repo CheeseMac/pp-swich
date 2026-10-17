@@ -83,10 +83,24 @@ class ControlSettings(BaseModel):
         "PP_SWITCH_SHARED_KEYRING", "false"
     ).lower() in ("1", "true", "yes")
     namespace_id: str = os.environ.get("PP_SWITCH_NAMESPACE_ID", "local")
+    # FIX-02: authorization signing keys, separate trust channels from the
+    # transport token. Shared deployments MUST set them explicitly
+    # (validated at startup); personal mode falls back to the internal
+    # token so the single-user Alpha needs no extra secrets.
+    claim_ticket_key: str = os.environ.get("PP_SWITCH_CLAIM_TICKET_KEY", "")
+    plan_signing_key: str = os.environ.get("PP_SWITCH_PLAN_SIGNING_KEY", "")
 
     @property
     def effective_delegation_key(self) -> str:
         return self.delegation_signing_key or self.internal_token
+
+    @property
+    def effective_claim_ticket_key(self) -> str:
+        return self.claim_ticket_key or self.internal_token
+
+    @property
+    def effective_plan_signing_key(self) -> str:
+        return self.plan_signing_key or self.internal_token
 
     @classmethod
     def from_env(cls) -> ControlSettings:

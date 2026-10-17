@@ -33,6 +33,7 @@ import hmac
 import json
 import os
 import secrets
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,9 @@ def _verify_signed(blob: str, key: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
+TICKET_AUDIENCE = "executor"
+
+
 def sign_claim_ticket(
     *,
     key: str,
@@ -114,6 +118,7 @@ def sign_claim_ticket(
         raise ValueError(f"unsupported ticket purpose {purpose!r}")
     body: dict[str, Any] = {
         "purpose": purpose,
+        "aud": TICKET_AUDIENCE,
         "namespace_id": namespace_id,
         "name": name,
         "generation": generation,
@@ -129,6 +134,8 @@ def verify_claim_ticket(blob: str, *, key: str, purpose: str) -> dict:
     payload = _verify_signed(blob, key)
     if payload.get("purpose") != purpose:
         raise ApiError(ErrorCode.KEYRING_CLAIM_PROOF_INVALID, "Token purpose mismatch")
+    if payload.get("aud") != TICKET_AUDIENCE:
+        raise ApiError(ErrorCode.KEYRING_CLAIM_PROOF_INVALID, "Token audience mismatch")
     if float(payload.get("exp", 0)) < time.time():
         raise ApiError(ErrorCode.KEYRING_CLAIM_PROOF_INVALID, "Token expired")
     for field in ("namespace_id", "name", "generation", "pin_version"):
@@ -266,12 +273,20 @@ class LocalNonceStore:
             pass
 
     def validate(self, presented: str) -> bool:
+        """Strict check against the CURRENT nonce only (the previous value
+        died at the last rotation); no consumption here."""
         self.ensure()
         if not presented:
             return False
-        return hmac.compare_digest(presented, self._current) or (
-            bool(self._previous) and hmac.compare_digest(presented, self._previous)
-        )
+        return hmac.compare_digest(presented, self._current)
+
+    def validate_and_consume(self, presented: str) -> bool:
+        """FIX-03: single-use local proof - a successful attestation
+        rotates the nonce, so a leaked value dies with its first use."""
+        if not self.validate(presented):
+            return False
+        self._rotate()
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +360,9 @@ class ClaimSecurity:
     """
 
     def __init__(self, *, internal_token: str, shared: bool, pin_key: str,
-                 attest_key: str, local_attest_dir: str, control_url: str) -> None:
+                 attest_key: str, claim_ticket_key: str, plan_signing_key: str,
+                 local_attest_dir: str, control_url: str,
+                 start_listener: bool = True) -> None:
         self.shared = shared
         if pin_key:
             self.pin_key = pin_key
@@ -353,9 +370,30 @@ class ClaimSecurity:
             raise RuntimeError("PP_SWITCH_PIN_KEY is mandatory in shared-keyring mode")
         else:
             self.pin_key = derive_pin_key(internal_token)
+        # FIX-02: authorization signing keys are SEPARATE trust channels
+        # from the transport token. Shared mode refuses derived values;
+        # personal mode (single-user trust domain) falls back to the
+        # internal token so the Alpha UX needs no extra secrets.
+        if claim_ticket_key:
+            self.claim_ticket_key = claim_ticket_key
+        elif shared:
+            raise RuntimeError(
+                "PP_SWITCH_CLAIM_TICKET_KEY is mandatory in shared-keyring mode"
+            )
+        else:
+            self.claim_ticket_key = internal_token
+        if plan_signing_key:
+            self.plan_signing_key = plan_signing_key
+        elif shared:
+            raise RuntimeError(
+                "PP_SWITCH_PLAN_SIGNING_KEY is mandatory in shared-keyring mode"
+            )
+        else:
+            self.plan_signing_key = internal_token
         self.attest_key = attest_key or None
         self.nonces = LocalNonceStore(local_attest_dir)
         self.control_url = control_url.rstrip("/")
+        self.listener: LocalAttestListener | None = None
         if shared:
             if not self.attest_key:
                 raise RuntimeError(
@@ -369,3 +407,133 @@ class ClaimSecurity:
             # eager: the CLI on this machine must find the nonce file the
             # moment the executor is up (OS-permission-protected directory)
             self.nonces.ensure()
+            # FIX-03: ownership attestations are minted ONLY over the
+            # OS-protected local channel - never over HTTP
+            self.listener = LocalAttestListener(self)
+            if start_listener:
+                self.listener.start()
+
+
+class LocalAttestListener:
+    """FIX-03: OS-protected local IPC for minting ownership attestations.
+
+    The signing surface is deliberately NOT an HTTP endpoint - the
+    generic internal token can never mint an attestation, regardless of
+    what nonce material it may hold.
+
+    - POSIX: an AF_UNIX socket inside the 0700 attest directory with the
+      socket file chmod 0600 - only the executor's OS user (or root) can
+      even connect; remote hosts cannot reach it at all.
+    - Windows (no AF_UNIX in WinSock): a loopback-only TCP socket whose
+      RANDOM port is written to ``listener.port`` inside the same
+      protected directory - reading the port requires local filesystem
+      access to that directory, and the single-use nonce still gates
+      every request.
+
+    Protocol: one newline-delimited JSON request per connection
+    ``{name, pairing_code, ticket, local_nonce}``; a successful issuance
+    CONSUMES the nonce (rotation), so a leaked value dies with its
+    first use. Replies ``{"attestation": ...}`` or ``{"error": ...}``.
+    """
+
+    def __init__(self, claims: ClaimSecurity) -> None:
+        self._claims = claims
+        self._socket: Any = None
+        self._thread: threading.Thread | None = None
+        self.unix_path = claims.nonces._dir / "attest.sock"
+        self.port_file = claims.nonces._dir / "listener.port"
+
+    def start(self) -> None:
+        import socket as socket_module
+
+        claims = self._claims
+        claims.nonces.ensure_dir_only()
+        if hasattr(socket_module, "AF_UNIX"):
+            try:
+                self.unix_path.unlink()
+            except FileNotFoundError:
+                pass
+            self._socket = socket_module.socket(
+                socket_module.AF_UNIX, socket_module.SOCK_STREAM
+            )
+            self._socket.bind(str(self.unix_path))
+            try:
+                os.chmod(self.unix_path, 0o600)
+            except OSError:
+                pass
+        else:
+            self._socket = socket_module.socket(
+                socket_module.AF_INET, socket_module.SOCK_STREAM
+            )
+            self._socket.bind(("127.0.0.1", 0))
+            self.port_file.write_text(str(self._socket.getsockname()[1]),
+                                      encoding="utf-8")
+        self._socket.listen(4)
+        try:
+            self._socket.settimeout(1.0)
+        except OSError:
+            pass
+        self._thread = threading.Thread(
+            target=self._serve, name="ppswitch-local-attest", daemon=True
+        )
+        self._thread.start()
+
+    def _serve(self) -> None:  # pragma: no cover - socket accept loop
+        while True:
+            try:
+                conn, _ = self._socket.accept()
+            except (OSError, TimeoutError):
+                continue
+            try:
+                with conn:
+                    conn.settimeout(15.0)
+                    data = b""
+                    while not data.endswith(b"\n"):
+                        chunk = conn.recv(4096)
+                        if not chunk:
+                            break
+                        data += chunk
+                        if len(data) > 65536:
+                            break
+                    reply = self._handle(data)
+                    conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
+            except OSError:
+                continue
+
+    def _handle(self, data: bytes) -> dict:
+        try:
+            request = json.loads(data.decode("utf-8"))
+            name = str(request["name"])
+            pairing_code = str(request["pairing_code"])
+            ticket = str(request["ticket"])
+            local_nonce = str(request["local_nonce"])
+        except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+            return {"error": "malformed_request"}
+        claims = self._claims
+        if not claims.nonces.validate_and_consume(local_nonce):
+            return {"error": "local_proof_invalid"}
+        try:
+            binding = verify_pairing_ticket(ticket, key=claims.claim_ticket_key)
+        except ApiError:
+            return {"error": "ticket_invalid"}
+        if binding["name"] != name.lower():
+            return {"error": "ticket_name_mismatch"}
+        code_hash = hashlib.sha256(pairing_code.encode("utf-8")).hexdigest()
+        attestation = sign_attestation(
+            claims.attest_key or "",
+            namespace_id=binding["namespace_id"],
+            name=binding["name"],
+            principal_id=binding["principal_id"],
+            workspace_id=binding["workspace_id"],
+            proof_id=binding["proof_id"],
+            pairing_code_hash=code_hash,
+        )
+        return {"attestation": attestation}
+
+    def connect_address(self):
+        """Client-side helper: the address a LOCAL CLI should dial."""
+        import socket as socket_module
+
+        if hasattr(socket_module, "AF_UNIX"):
+            return ("unix", str(self.unix_path))
+        return ("tcp", "127.0.0.1", int(self.port_file.read_text(encoding="utf-8")))
